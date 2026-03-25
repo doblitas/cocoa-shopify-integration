@@ -1,36 +1,102 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Cocoa Shopify Integration — solo productos (Multi-tenant)
 
-## Getting Started
+Integración **exclusivamente de productos** Shopify → Cocoa, alineada con la documentación Cocoa de API de producto (login + create/update). No incluye pedidos ni otros dominios.
 
-First, run the development server:
+Referencias:
+
+- `../docs/Webservice - Api producto Cocoa..docx`
+- `../docs/Webservice - Api producto Cocoa..md`
+- Alcance detallado: [`docs/SCOPE.md`](docs/SCOPE.md)
+
+## What is implemented
+
+- Next.js API endpoint to receive Shopify **product** webhooks:
+  - `POST /api/webhooks/shopify/products`
+- Supported webhook topics (único alcance de catálogo):
+  - `products/create`
+  - `products/update`
+- Cocoa authentication + create/update product calls
+- Tenant isolation by `shopDomain` (custom app model for multiple stores)
+- Webhook HMAC validation per tenant
+- Product link persistence (`shopifyProductId -> cocoaProductKey`) using Upstash Redis
+  - If Redis env vars are missing, the app falls back to in-memory storage
+- Webhook idempotency via `x-shopify-webhook-id` (Redis or in-memory; avoids duplicate Cocoa calls on retries)
+
+## Tests
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run test
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Offline steps (Vercel, Shopify, secrets)
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+See [`docs/OFFLINE_CHECKLIST.md`](docs/OFFLINE_CHECKLIST.md).
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Environment variables
 
-## Learn More
+Create a `.env.local` file based on `.env.example`.
 
-To learn more about Next.js, take a look at the following resources:
+Key variable:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+- `SHOPIFY_TENANTS_JSON`: JSON array with one object per store/tenant.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Example:
 
-## Deploy on Vercel
+```json
+[
+  {
+    "tenantId": "cocoa_bo",
+    "shopDomain": "my-store-bolivia.myshopify.com",
+    "webhookSecret": "shopify_webhook_secret_here",
+    "adminAccessToken": "shpat_xxxxx",
+    "cocoa": {
+      "baseUrl": "app-z3gjk55rwa-uc.a.run.app",
+      "user": "1234",
+      "password": "1234"
+    },
+    "defaultCategoryKey": "dEDtC5EoKxdtwHqIhi8a",
+    "categoryMap": {
+      "lo mas vendido": "dEDtC5EoKxdtwHqIhi8a",
+      "unico en tu tienda": "pEfPrAFQ4O569IEOjCsd",
+      "otros": "rpRif5eUwaxCr1AT6aD6",
+      "lo nuevo": "rxC6t41HWRt8ddM1Hjzk"
+    }
+  }
+]
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+Optional Redis variables for durable mappings:
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+
+## Shopify configuration checklist (per store)
+
+1. In Shopify Admin, create/install a **Custom App** for that store.
+2. Grant minimum Admin API scopes for **product sync only**:
+   - `read_products`
+   - `write_products`
+   - `read_inventory` (if stock sync is required)
+3. Configure webhooks:
+   - `products/create` -> `https://your-vercel-domain/api/webhooks/shopify/products`
+   - `products/update` -> `https://your-vercel-domain/api/webhooks/shopify/products`
+4. Copy webhook secret and set it in that tenant object.
+5. Ensure products include data needed by Cocoa mapping:
+   - title, description, sku, price, inventory, image, product type/tags.
+
+## Run locally
+
+```bash
+npm install
+npm run dev
+```
+
+Useful endpoints:
+
+- Health: `GET /api/health`
+- Webhook receiver: `POST /api/webhooks/shopify/products`
+
+## Notes about Cocoa payload
+
+The integration sends `multipart/form-data` with the `datos` field as JSON string.
+When `url_imagen` is present, the file upload is optional according to the documentation update.

@@ -1,0 +1,74 @@
+import type { TenantConfig } from "@/lib/tenants";
+import type { ShopifyProductWebhookPayload } from "@/lib/shopify/types";
+
+export type CocoaProductDraft = {
+  nombre: string;
+  sku: string;
+  descripcion: string;
+  precio: number;
+  have_stock: boolean;
+  stock: number;
+  key_categoria: string;
+  url_imagen?: string;
+};
+
+function stripHtml(input: string): string {
+  return input.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function normalizeCategoryKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function getCategoryKey(payload: ShopifyProductWebhookPayload, tenant: TenantConfig): string {
+  const categoryMap = tenant.categoryMap ?? {};
+
+  const candidateKeys: string[] = [];
+  if (payload.product_type) {
+    candidateKeys.push(payload.product_type);
+  }
+  if (payload.tags) {
+    candidateKeys.push(...payload.tags.split(","));
+  }
+
+  for (const key of candidateKeys) {
+    const mapped = categoryMap[normalizeCategoryKey(key)];
+    if (mapped) {
+      return mapped;
+    }
+  }
+
+  if (tenant.defaultCategoryKey) {
+    return tenant.defaultCategoryKey;
+  }
+
+  throw new Error(
+    `No category mapping found for product "${payload.title}". Add categoryMap or defaultCategoryKey for tenant ${tenant.tenantId}.`,
+  );
+}
+
+export function mapShopifyProductToCocoaDraft(
+  payload: ShopifyProductWebhookPayload,
+  tenant: TenantConfig,
+): CocoaProductDraft {
+  const firstVariant = payload.variants[0];
+  if (!firstVariant) {
+    throw new Error(`Product ${payload.id} does not contain variants`);
+  }
+
+  const parsedPrice = Number(firstVariant.price ?? "0");
+  const stock = Number(firstVariant.inventory_quantity ?? 0);
+  const imageUrl = payload.image?.src ?? payload.images?.[0]?.src;
+
+  return {
+    nombre: payload.title,
+    sku: firstVariant.sku || String(payload.id),
+    descripcion: stripHtml(payload.body_html ?? ""),
+    precio: Number.isFinite(parsedPrice) ? parsedPrice : 0,
+    have_stock: stock > 0,
+    stock: Number.isFinite(stock) ? stock : 0,
+    key_categoria: getCategoryKey(payload, tenant),
+    url_imagen: imageUrl,
+  };
+}
+
