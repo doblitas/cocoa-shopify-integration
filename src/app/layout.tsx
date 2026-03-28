@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import Script from "next/script";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -29,14 +28,15 @@ export default function RootLayout({
     <html lang="en">
       <head>
         {shopifyApiKey ? <meta name="shopify-api-key" content={shopifyApiKey} /> : null}
+        {/* App Bridge exige el primer <script> sin async/defer/module; next/script añade async y rompe la carga. */}
+        <script
+          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+          suppressHydrationWarning
+        />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <Script
-          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-          strategy="beforeInteractive"
-        />
         {children}
       </body>
     </html>
