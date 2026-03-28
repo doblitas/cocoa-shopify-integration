@@ -6,14 +6,27 @@ import { NextResponse } from "next/server";
  * debe ir antes del script app-bridge.js (Next suele poner muchos <script> antes del meta).
  * @see https://github.com/Shopify/shopify-app-bridge/issues/311
  *
- * Tras deploy (verificación manual):
- * 1) View source en /dashboard?shop=… — meta shopify-api-key antes de <script src="/_next/…">, app-bridge.js después.
- * 2) Consola del iframe (no la del top admin): sin errores de “first script” / async / shopify global.
- * 3) typeof window.shopify !== "undefined" tras carga.
+ * Fase 1 — Diagnóstico en el iframe (DevTools del iframe, no del admin):
+ * - Network: expandir el GET repetido y anotar la URL completa (¿/dashboard?… vs solo admin.shopify.com).
+ * - Console: errores en rojo; `typeof window.shopify` (y `window.shopify?.config` si existe).
+ * - View source de /dashboard?shop=…&host=…: orden meta shopify-api-key → scripts /_next (con parche) → app-bridge.js.
  *
- * Plan B si esto deja de ser estable: plantilla `shopify app init` o Pages Router + `_document.tsx`.
+ * Fase 2 — A/B: `SHOPIFY_SKIP_DASHBOARD_HTML_PATCH=1` en Vercel → sin fetch interno ni regex; solo CSP + next().
+ * Tras redeploy: si el bucle para → el post-procesado HTML era problemático (revisar regex o otra estrategia).
+ * Si el bucle sigue → no es (solo) el middleware; ver Fase 3 del plan (layout embebido / Pages _document / plantilla Shopify).
+ *
+ * Fase 4 — Coherencia: en Vercel Production, `NEXT_PUBLIC_SHOPIFY_API_KEY` = Client ID = `client_id` en shopify.app.toml;
+ * en Partners, App URL = application_url del TOML. Abrir la app desde Apps (URL con ?host= y ?shop=).
+ *
+ * Plan B si nada es estable: plantilla `shopify app init` o Pages Router + `_document.tsx`.
  */
 const INTERNAL_HEADER = "x-shopify-ab-patched";
+
+/** Si es "1" o "true", no reescribir HTML de /dashboard (experimento A/B frente al bucle del iframe). */
+function skipDashboardHtmlPatch(): boolean {
+  const v = process.env.SHOPIFY_SKIP_DASHBOARD_HTML_PATCH?.trim().toLowerCase();
+  return v === "1" || v === "true" || v === "yes";
+}
 
 const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
@@ -101,7 +114,7 @@ export async function middleware(request: NextRequest) {
   const isDashboard = path === "/dashboard" || path.startsWith("/dashboard/");
   const wantsHtml = request.headers.get("accept")?.includes("text/html");
 
-  if (isDashboard && request.method === "GET" && wantsHtml) {
+  if (isDashboard && request.method === "GET" && wantsHtml && !skipDashboardHtmlPatch()) {
     const url = getInternalFetchUrl(request);
     const headers = new Headers(request.headers);
     headers.set(INTERNAL_HEADER, "1");

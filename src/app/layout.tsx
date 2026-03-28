@@ -17,6 +17,7 @@ export const metadata: Metadata = {
   description: "Sincronización de productos Shopify → Cocoa",
 };
 
+/** Mismo Client ID que `client_id` en shopify.app.toml y en Partners (App URL debe coincidir con application_url). */
 const shopifyApiKey = process.env.NEXT_PUBLIC_SHOPIFY_API_KEY?.trim() ?? "";
 
 export default function RootLayout({
