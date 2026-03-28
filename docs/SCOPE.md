@@ -9,6 +9,7 @@ Este repositorio implementa **únicamente la integración de productos** entre S
 - Autenticación Cocoa (`/autenticacion/api/login`).
 - Creación y actualización de productos (`/producto/rolComercio/create`, `/producto/rolComercio/update`).
 - Webhooks de Shopify solo para catálogo: `products/create`, `products/update`.
+- Sync inicial opcional: `POST /api/sync/products` (Admin API + mismo mapeo a Cocoa; requiere `adminAccessToken` y `SYNC_SECRET`).
 
 ## Qué no cubre
 

@@ -1,0 +1,20 @@
+[
+  {
+    "tenantId": "JI",
+    "shopDomain": "joyeriaimperio.myshopify.com",
+    "webhookSecret": "PEGAR_SECRETO_FIRMA_WEBHOOKS_DE_LA_TIENDA",
+    "adminAccessToken": "shpat_NECESARIO_PARA_SYNC_INICIAL",
+    "cocoa": {
+      "baseUrl": "app-z3gjk55rwa-uc.a.run.app",
+      "user": "USUARIO_COCOA_TEST",
+      "password": "PASSWORD_COCOA_TEST"
+    },
+    "defaultCategoryKey": "dEDtC5EoKxdtwHqIhi8a",
+    "categoryMap": {
+      "lo mas vendido": "dEDtC5EoKxdtwHqIhi8a",
+      "unico en tu tienda": "pEfPrAFQ4O569IEOjCsd",
+      "otros": "rpRif5eUwaxCr1AT6aD6",
+      "lo nuevo": "rxC6t41HWRt8ddM1Hjzk"
+    }
+  }
+]

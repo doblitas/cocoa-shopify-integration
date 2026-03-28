@@ -21,6 +21,32 @@ Referencias:
 - Product link persistence (`shopifyProductId -> cocoaProductKey`) using Upstash Redis
   - If Redis env vars are missing, the app falls back to in-memory storage
 - Webhook idempotency via `x-shopify-webhook-id` (Redis or in-memory; avoids duplicate Cocoa calls on retries)
+- **Initial sync** of existing catalog: `POST /api/sync/products` (Shopify Admin API + same Cocoa mapping as webhooks). Auth: **`SYNC_SECRET`** + `?tenantId=...`, or **Shopify session JWT** (embedded admin).
+- **Embedded dashboard** (`/dashboard`): muestra el último estado de sync (Redis) y botones **Actualizar estado** y **Sincronizar todo** usando el JWT del admin (no expone `SYNC_SECRET` al navegador).
+
+## Initial sync (productos ya existentes en Shopify)
+
+Para importar el catálogo **antes** de que disparen webhooks, necesitas:
+
+1. En el tenant, **`adminAccessToken`** (`shpat_...`) con permisos **`read_products`** (y `read_inventory` si quieres stock).
+2. Una de estas formas de **autenticación** al llamar `POST /api/sync/products`:
+   - **Desde el admin embebido**: abre la app en Shopify → `/dashboard` → **Sincronizar todo**. Requiere en el servidor `NEXT_PUBLIC_SHOPIFY_API_KEY` y `SHOPIFY_API_SECRET` (misma app custom que la tienda) para validar el JWT.
+   - **Desde curl / CI**: define **`SYNC_SECRET`** y envía `Authorization: Bearer …` con query `?tenantId=…` (como antes).
+
+Ejemplo curl (operador):
+
+```bash
+curl -sS -X POST \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&max=5000" \
+  -H "Authorization: Bearer TU_SYNC_SECRET"
+```
+
+- Con **`SYNC_SECRET`**, `tenantId` debe coincidir con `SHOPIFY_TENANTS_JSON`.
+- Con **JWT de sesión**, el servidor infiere la tienda desde el token (no fuerces otra tienda con `tenantId` distinto).
+- `max` (opcional) limita cuántos productos procesar (por defecto 10000, máximo 50000 en código).
+- Opcional: `SHOPIFY_ADMIN_API_VERSION` (por defecto `2024-10`).
+
+En Vercel, los proyectos tienen límite de tiempo de ejecución; catálogos enormes pueden necesitar varias ejecuciones con `max` menor o más tiempo en el plan.
 
 ## Tests
 
@@ -70,6 +96,17 @@ Optional Redis variables for durable mappings:
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
 
+For **bulk sync** and **embedded dashboard** (validar JWT del admin):
+
+- `NEXT_PUBLIC_SHOPIFY_API_KEY` (Client ID de la app en Partners)
+- `SHOPIFY_API_SECRET` (Client secret)
+
+Optional:
+
+- `SYNC_SECRET` — solo necesario si quieres llamar `POST /api/sync/products` con Bearer fijo + `?tenantId=` (curl/CI). Si solo usas el dashboard embebido, puedes omitirlo.
+- `SHOPIFY_APP_HOST` — hostname público de la app sin esquema (por defecto `VERCEL_URL` en producción).
+- `SHOPIFY_ADMIN_API_VERSION` (default `2024-10`)
+
 ## Shopify configuration checklist (per store)
 
 1. In Shopify Admin, create/install a **Custom App** for that store.
@@ -95,6 +132,7 @@ Useful endpoints:
 
 - Health: `GET /api/health`
 - Webhook receiver: `POST /api/webhooks/shopify/products`
+- Embedded UI: `GET /dashboard` (App URL en Partners)
 
 ## Notes about Cocoa payload
 

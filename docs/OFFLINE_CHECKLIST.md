@@ -15,9 +15,10 @@ En el proyecto → **Settings → Environment Variables**, añade al menos:
 
 | Variable | Descripción |
 |----------|-------------|
-| `SHOPIFY_TENANTS_JSON` | JSON con un objeto por tienda (ver `.env.example` y `README.md`). Incluye `shopDomain`, `webhookSecret`, credenciales Cocoa y categorías. |
+| `SHOPIFY_TENANTS_JSON` | JSON con un objeto por tienda (ver `.env.example` y `README.md`). Incluye `shopDomain`, `webhookSecret`, credenciales Cocoa y categorías. Para **sync inicial**, cada tenant debe incluir `adminAccessToken` (`shpat_...`). |
 | `UPSTASH_REDIS_REST_URL` | (Recomendado) URL REST de Redis/Upstash para mapeos `Shopify product id → Cocoa key` e idempotencia de webhooks. |
 | `UPSTASH_REDIS_REST_TOKEN` | Token REST asociado. |
+| `SYNC_SECRET` | Secreto para llamar a `POST /api/sync/products` (header `Authorization: Bearer ...`). |
 
 Sin Redis, el servidor usa memoria en caliente (se pierde al reiniciar y no escala entre instancias).
 

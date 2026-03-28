@@ -6,6 +6,7 @@ import { mapShopifyProductToCocoaDraft } from "@/lib/shopify/mapProduct";
 import type { ShopifyProductWebhookPayload } from "@/lib/shopify/types";
 import { verifyShopifyWebhookSignature } from "@/lib/shopify/verifyWebhook";
 import { getTenantByShopDomain } from "@/lib/tenants";
+import { saveSyncStatus } from "@/lib/syncStatus/store";
 import { claimShopifyWebhookOnce } from "@/lib/webhookIdempotency";
 
 export const runtime = "nodejs";
@@ -68,6 +69,13 @@ export async function POST(request: Request) {
 
     if (existingCocoaKey) {
       await updateProductInCocoa(tenant.cocoa, tenant.tenantId, existingCocoaKey, draft);
+      await saveSyncStatus(tenant.tenantId, {
+        updatedAt: new Date().toISOString(),
+        source: "webhook",
+        ok: true,
+        shopifyProductId: payload.id,
+        action: "update",
+      });
       return NextResponse.json({
         ok: true,
         action: "update",
@@ -83,6 +91,14 @@ export async function POST(request: Request) {
       await saveCocoaProductKey(tenant.tenantId, payload.id, newCocoaKey);
     }
 
+    await saveSyncStatus(tenant.tenantId, {
+      updatedAt: new Date().toISOString(),
+      source: "webhook",
+      ok: true,
+      shopifyProductId: payload.id,
+      action: "create",
+    });
+
     return NextResponse.json({
       ok: true,
       action: "create",
@@ -92,11 +108,19 @@ export async function POST(request: Request) {
       cocoaProductKey: newCocoaKey,
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Product sync failed", {
       tenantId: tenant.tenantId,
       shopDomain: tenant.shopDomain,
       topic,
-      message: error instanceof Error ? error.message : "Unknown error",
+      message,
+    });
+
+    await saveSyncStatus(tenant.tenantId, {
+      updatedAt: new Date().toISOString(),
+      source: "webhook",
+      ok: false,
+      error: message,
     });
 
     return jsonError("Product synchronization failed", 500);

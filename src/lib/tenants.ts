@@ -96,3 +96,13 @@ export function getTenantByShopDomain(shopDomain: string): TenantConfig | null {
   return loadTenants().get(normalized) ?? null;
 }
 
+export function getTenantByTenantId(tenantId: string): TenantConfig | null {
+  const wanted = tenantId.trim();
+  for (const tenant of loadTenants().values()) {
+    if (tenant.tenantId === wanted) {
+      return tenant;
+    }
+  }
+  return null;
+}
+
