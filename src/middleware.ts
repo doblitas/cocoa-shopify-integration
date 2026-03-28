@@ -8,17 +8,22 @@ import { NextResponse } from "next/server";
  */
 const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i;
 
-function contentSecurityPolicyFrameAncestors(shop: string | null): string {
+function contentSecurityPolicyFrameAncestors(shop: string | null, hasHost: boolean): string {
   if (shop && SHOP_RE.test(shop)) {
     return `frame-ancestors https://${shop} https://admin.shopify.com;`;
+  }
+  // Sin ?shop= en la URL (a veces el log de Vercel no muestra query): si viene ?host= (embebido), permitir tiendas myshopify + admin.
+  if (hasHost) {
+    return "frame-ancestors https://admin.shopify.com https://*.myshopify.com;";
   }
   return "frame-ancestors https://admin.shopify.com;";
 }
 
 export function middleware(request: NextRequest) {
   const shop = request.nextUrl.searchParams.get("shop");
+  const hasHost = request.nextUrl.searchParams.has("host");
   const res = NextResponse.next();
-  res.headers.set("Content-Security-Policy", contentSecurityPolicyFrameAncestors(shop));
+  res.headers.set("Content-Security-Policy", contentSecurityPolicyFrameAncestors(shop, hasHost));
   return res;
 }
 

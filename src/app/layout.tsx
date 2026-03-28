@@ -17,7 +17,7 @@ export const metadata: Metadata = {
   description: "Sincronización de productos Shopify → Cocoa",
 };
 
-const shopifyApiKey = process.env.NEXT_PUBLIC_SHOPIFY_API_KEY ?? "";
+const shopifyApiKey = process.env.NEXT_PUBLIC_SHOPIFY_API_KEY?.trim() ?? "";
 
 export default function RootLayout({
   children,
@@ -27,12 +27,17 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
-        {shopifyApiKey ? <meta name="shopify-api-key" content={shopifyApiKey} /> : null}
-        {/* App Bridge exige el primer <script> sin async/defer/module; next/script añade async y rompe la carga. */}
-        <script
-          src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-          suppressHydrationWarning
-        />
+        {/* Sin API key no cargamos App Bridge: evita iframe reintentando sin window.shopify. */}
+        {shopifyApiKey ? (
+          <>
+            <meta name="shopify-api-key" content={shopifyApiKey} />
+            {/* App Bridge: primer script sin async/defer/module */}
+            <script
+              src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
+              suppressHydrationWarning
+            />
+          </>
+        ) : null}
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
