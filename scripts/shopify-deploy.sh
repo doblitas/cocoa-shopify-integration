@@ -22,4 +22,9 @@ if [[ -z "$CID" ]]; then
   exit 1
 fi
 
+# shopify app deploy identifica la app por client_id en shopify.app.toml; --client-id no sustituye ese valor.
+export _SHOPIFY_PATCH_CID="$CID"
+perl -pi -e 'BEGIN { $c = $ENV{"_SHOPIFY_PATCH_CID"} or die "missing cid" } s/^client_id = ".*"/client_id = "$c"/' shopify.app.toml
+unset _SHOPIFY_PATCH_CID
+
 exec shopify app deploy --force --client-id "$CID"

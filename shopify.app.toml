@@ -1,9 +1,10 @@
 # Configuración de la app para Shopify CLI (shopify app dev / shopify app deploy).
-# client_id: puedes dejar el placeholder; al desplegar usa `npm run shopify:deploy` (pasa --client-id desde .env.local).
+# client_id debe ser el Client ID real (mismo que NEXT_PUBLIC_SHOPIFY_API_KEY). `npm run shopify:deploy` lo sincroniza desde .env.local antes de deploy.
+# No ejecutes `shopify app deploy` a mano si client_id es un placeholder: el CLI busca la app por ese valor en el TOML.
 # Si cambias de dominio, actualiza application_url, [auth].redirect_urls y (opcional) SHOPIFY_APP_HOST en Vercel.
 
 name = "Cocoa Integration"
-client_id = "REPLACE_WITH_CLIENT_ID"
+client_id = "68fe81d096485e2e34b3e96008b805b3"
 application_url = "https://cocoa-shopify-integration.vercel.app/dashboard"
 embedded = true
 
