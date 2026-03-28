@@ -17,9 +17,6 @@ export const metadata: Metadata = {
   description: "Sincronización de productos Shopify → Cocoa",
 };
 
-/** Mismo Client ID que `client_id` en shopify.app.toml y en Partners (App URL debe coincidir con application_url). */
-const shopifyApiKey = process.env.NEXT_PUBLIC_SHOPIFY_API_KEY?.trim() ?? "";
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -27,25 +24,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <head>
-        {/* Sin API key no cargamos App Bridge: evita iframe reintentando sin window.shopify. */}
-        {shopifyApiKey ? (
-          <>
-            <meta name="shopify-api-key" content={shopifyApiKey} />
-            {/* App Bridge: primer script sin async/defer/module */}
-            {/* eslint-disable-next-line @next/next/no-sync-scripts -- Shopify CDN requiere script bloqueante para orden correcto. */}
-            <script
-              src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
-              suppressHydrationWarning
-            />
-          </>
-        ) : null}
-      </head>
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
-        {children}
-      </body>
+      <body className={`${geistSans.variable} ${geistMono.variable} antialiased`}>{children}</body>
     </html>
   );
 }

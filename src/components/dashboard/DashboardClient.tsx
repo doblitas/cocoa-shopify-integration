@@ -4,7 +4,7 @@ import { AppProvider, BlockStack, Card, InlineStack, Spinner, Text } from "@shop
 import en from "@shopify/polaris/locales/en.json";
 import { useEffect, useState } from "react";
 
-import { DashboardBridge } from "./DashboardBridge";
+import { DashboardBridge } from "@/components/dashboard/DashboardBridge";
 
 /**
  * Espera a que App Bridge defina window.shopify antes de montar useAppBridge
