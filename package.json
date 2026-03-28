@@ -8,7 +8,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "shopify:deploy": "bash scripts/shopify-deploy.sh"
   },
   "dependencies": {
     "@shopify/app-bridge": "^3.7.11",

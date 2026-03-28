@@ -1,6 +1,6 @@
 # Configuración de la app para Shopify CLI (shopify app dev / shopify app deploy).
-# 1) Sustituye client_id por el mismo valor que NEXT_PUBLIC_SHOPIFY_API_KEY (Client ID en Partners / dev dashboard).
-# 2) Si cambias de dominio, actualiza application_url, [auth].redirect_urls y (opcional) SHOPIFY_APP_HOST en Vercel.
+# client_id: puedes dejar el placeholder; al desplegar usa `npm run shopify:deploy` (pasa --client-id desde .env.local).
+# Si cambias de dominio, actualiza application_url, [auth].redirect_urls y (opcional) SHOPIFY_APP_HOST en Vercel.
 
 name = "Cocoa Integration"
 client_id = "REPLACE_WITH_CLIENT_ID"
