@@ -19,8 +19,10 @@ export function DashboardClient() {
 
     const key = document.querySelector('meta[name="shopify-api-key"]')?.getAttribute("content")?.trim();
     if (!key) {
-      setInitError(
-        "Falta NEXT_PUBLIC_SHOPIFY_API_KEY en Vercel (Environment Variables → Production). Sin la Client ID, App Bridge no crea window.shopify y el admin puede reintentar la carga en bucle.",
+      queueMicrotask(() =>
+        setInitError(
+          "Falta NEXT_PUBLIC_SHOPIFY_API_KEY en Vercel (Environment Variables → Production). Sin la Client ID, App Bridge no crea window.shopify y el admin puede reintentar la carga en bucle.",
+        ),
       );
       return;
     }
@@ -29,7 +31,7 @@ export function DashboardClient() {
       typeof (window as unknown as { shopify?: unknown }).shopify !== "undefined";
 
     if (hasBridge()) {
-      setBridgeReady(true);
+      queueMicrotask(() => setBridgeReady(true));
       return;
     }
 

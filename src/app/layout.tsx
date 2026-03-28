@@ -32,6 +32,7 @@ export default function RootLayout({
           <>
             <meta name="shopify-api-key" content={shopifyApiKey} />
             {/* App Bridge: primer script sin async/defer/module */}
+            {/* eslint-disable-next-line @next/next/no-sync-scripts -- Shopify CDN requiere script bloqueante para orden correcto. */}
             <script
               src="https://cdn.shopify.com/shopifycloud/app-bridge.js"
               suppressHydrationWarning
