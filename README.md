@@ -150,4 +150,4 @@ Useful endpoints:
 
 ## Notes about Cocoa payload
 
-The integration sends `multipart/form-data` with a `datos` field (JSON string) and, when `url_imagen` is **not** set in that JSON, an empty `archivo` part so the API still receives both fields required by the doc (see `docs/Webservice - Api producto Cocoa..md`: with `url_imagen`, the file upload is optional).
+The integration sends `multipart/form-data` with `archivo` before `datos` (order per doc). When `url_imagen` is **not** in the JSON, it sends a **minimal PNG** as `archivo` (some backends reject 0-byte files). With `url_imagen`, only `datos` is required per the 13/10/2025 doc note.

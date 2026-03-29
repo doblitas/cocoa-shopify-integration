@@ -37,8 +37,18 @@ type TokenCacheEntry = {
 const tokenCache = new Map<string, TokenCacheEntry>();
 const TOKEN_TTL_MS = 1000 * 60 * 20;
 
-/** Parte vacía para cumplir `archivo` cuando no hay `url_imagen` en `datos`. */
-const EMPTY_FILE = new Blob([], { type: "application/octet-stream" });
+/**
+ * PNG 1×1 transparente (bytes válidos). Varios backends rechazan archivo 0 bytes;
+ * la doc exige `archivo` salvo si `url_imagen` va en `datos`.
+ */
+const MINIMAL_PNG_BYTES = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
+function placeholderImageBlob(): Blob {
+  return new Blob([MINIMAL_PNG_BYTES], { type: "image/png" });
+}
 
 function buildUrl(baseUrl: string, path: string): string {
   const normalized = baseUrl.startsWith("http") ? baseUrl : `https://${baseUrl}`;
@@ -127,10 +137,11 @@ function datosRequiresArchivoFile(datosObj: { url_imagen?: unknown }): boolean {
 function buildFormData(datosObj: Record<string, unknown>): FormData {
   const form = new FormData();
   const datosJson = JSON.stringify(datosObj);
-  form.append("datos", datosJson);
+  // Doc 3.2/3.3: orden archivo (1) → datos (2); algunos parsers son estrictos.
   if (datosRequiresArchivoFile(datosObj)) {
-    form.append("archivo", EMPTY_FILE, "empty.bin");
+    form.append("archivo", placeholderImageBlob(), "placeholder.png");
   }
+  form.append("datos", datosJson);
   return form;
 }
 
