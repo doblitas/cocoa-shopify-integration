@@ -2,19 +2,39 @@
 
 import { AppProvider, BlockStack, Card, InlineStack, Spinner, Text } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
-import { useEffect, useState } from "react";
+import { useRouter } from "next/router";
+import { useEffect, useMemo, useState } from "react";
 
 import { DashboardBridge } from "@/components/dashboard/DashboardBridge";
+
+function firstQueryParam(v: string | string[] | undefined): string {
+  if (v === undefined) return "";
+  return Array.isArray(v) ? (v[0] ?? "") : v;
+}
 
 /**
  * Espera a que App Bridge defina window.shopify antes de montar useAppBridge
  * (evita error en hidratación y recargas en bucle dentro del iframe).
  */
 export function DashboardClient() {
+  const router = useRouter();
+  const embedOk = useMemo((): boolean | null => {
+    if (!router.isReady) return null;
+    if (typeof window === "undefined") return null;
+    const host = firstQueryParam(router.query.host).trim();
+    const shop = firstQueryParam(router.query.shop).trim();
+    const inIframe = window.parent !== window;
+    const isLocalDev =
+      process.env.NODE_ENV === "development" &&
+      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
+    return isLocalDev || (inIframe && Boolean(host && shop));
+  }, [router.isReady, router.query]);
+
   const [bridgeReady, setBridgeReady] = useState(false);
   const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (embedOk !== true) return;
     if (typeof window === "undefined") return;
 
     const key = document.querySelector('meta[name="shopify-api-key"]')?.getAttribute("content")?.trim();
@@ -55,7 +75,36 @@ export function DashboardClient() {
       window.clearInterval(id);
       window.clearTimeout(timeout);
     };
-  }, []);
+  }, [embedOk]);
+
+  if (!router.isReady || embedOk === null) {
+    return (
+      <AppProvider i18n={en}>
+        <InlineStack align="center" blockAlign="center">
+          <Spinner accessibilityLabel="Cargando" size="large" />
+        </InlineStack>
+      </AppProvider>
+    );
+  }
+
+  if (!embedOk) {
+    return (
+      <AppProvider i18n={en}>
+        <Card>
+          <BlockStack gap="300">
+            <Text as="p" tone="critical">
+              Abre esta app desde el administrador de Shopify: <strong>Tienda → Apps → Cocoa Integration</strong> (o el
+              nombre de tu app). No uses la URL del dashboard en una pestaña suelta sin el contexto embebido.
+            </Text>
+            <Text as="p" variant="bodySm" tone="subdued">
+              La URL debe incluir los parámetros <code>host</code> y <code>shop</code> que añade Shopify al cargar la app
+              dentro del admin. Así evitas errores de App Bridge y avisos de <code>postMessage</code> en la consola.
+            </Text>
+          </BlockStack>
+        </Card>
+      </AppProvider>
+    );
+  }
 
   if (initError) {
     return (

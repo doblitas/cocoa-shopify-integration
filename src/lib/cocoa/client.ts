@@ -1,6 +1,10 @@
 /**
  * Cliente HTTP para la API Cocoa descrita en la documentación de producto:
  * login + create/update de producto únicamente.
+ *
+ * @see docs/Webservice - Api producto Cocoa..md
+ * - Body: multipart form-data con `datos` (string JSON) y `archivo` (file).
+ * - Si `url_imagen` va en `datos`, no es obligatorio subir archivo (actualización doc 13/10/2025).
  */
 import type { CocoaCredentials } from "@/lib/tenants";
 
@@ -32,6 +36,9 @@ type TokenCacheEntry = {
 
 const tokenCache = new Map<string, TokenCacheEntry>();
 const TOKEN_TTL_MS = 1000 * 60 * 20;
+
+/** Parte vacía para cumplir `archivo` cuando no hay `url_imagen` en `datos`. */
+const EMPTY_FILE = new Blob([], { type: "application/octet-stream" });
 
 function buildUrl(baseUrl: string, path: string): string {
   const normalized = baseUrl.startsWith("http") ? baseUrl : `https://${baseUrl}`;
@@ -69,9 +76,61 @@ async function getAuthToken(credentials: CocoaCredentials, tenantId: string): Pr
   return payload.token;
 }
 
-function buildFormData(draft: CocoaProductDraft & { key?: string }): FormData {
+/** Doc 3.2: mismo shape que el ejemplo (have_stock, stock, nombre, sku, …). */
+function buildCreateDatosObject(draft: CocoaProductDraft): Record<string, unknown> {
+  const o: Record<string, unknown> = {
+    have_stock: draft.have_stock,
+    stock: draft.stock,
+    nombre: draft.nombre,
+    sku: draft.sku,
+    descripcion: draft.descripcion,
+    precio: draft.precio,
+    key_categoria: draft.key_categoria,
+  };
+  if (draft.url_imagen?.trim()) {
+    o.url_imagen = draft.url_imagen.trim();
+  }
+  return o;
+}
+
+/**
+ * Doc 3.3: ejemplo con nombre, key, activo, deleted, have_oferta, ofertas, key_categoria.
+ * Sin fechas de oferta cuando have_oferta es false (evitar null que algunos backends rechazan).
+ */
+function buildUpdateDatosObject(draft: CocoaProductDraft, cocoaKey: string): Record<string, unknown> {
+  const o: Record<string, unknown> = {
+    nombre: draft.nombre,
+    sku: draft.sku,
+    descripcion: draft.descripcion,
+    precio: draft.precio,
+    have_stock: draft.have_stock,
+    stock: draft.stock,
+    key_categoria: draft.key_categoria,
+    key: cocoaKey,
+    activo: true,
+    deleted: false,
+    have_oferta: false,
+    precio_oferta: 0,
+    porcentaje_oferta: 0,
+  };
+  if (draft.url_imagen?.trim()) {
+    o.url_imagen = draft.url_imagen.trim();
+  }
+  return o;
+}
+
+function datosRequiresArchivoFile(datosObj: { url_imagen?: unknown }): boolean {
+  const u = datosObj.url_imagen;
+  return typeof u !== "string" || !u.trim();
+}
+
+function buildFormData(datosObj: Record<string, unknown>): FormData {
   const form = new FormData();
-  form.append("datos", JSON.stringify(draft));
+  const datosJson = JSON.stringify(datosObj);
+  form.append("datos", datosJson);
+  if (datosRequiresArchivoFile(datosObj)) {
+    form.append("archivo", EMPTY_FILE, "empty.bin");
+  }
   return form;
 }
 
@@ -79,7 +138,7 @@ async function sendProductRequest(
   credentials: CocoaCredentials,
   tenantId: string,
   path: "/producto/rolComercio/create" | "/producto/rolComercio/update",
-  body: CocoaProductDraft & { key?: string },
+  datosObj: Record<string, unknown>,
 ): Promise<CocoaUpsertResponse> {
   const token = await getAuthToken(credentials, tenantId);
   const url = buildUrl(credentials.baseUrl, path);
@@ -88,7 +147,7 @@ async function sendProductRequest(
     fetch(url, {
       method: "POST",
       headers: { token: accessToken },
-      body: buildFormData(body),
+      body: buildFormData(datosObj),
     });
 
   let response = await doRequest(token);
@@ -111,7 +170,8 @@ export async function createProductInCocoa(
   tenantId: string,
   draft: CocoaProductDraft,
 ): Promise<string | null> {
-  const response = await sendProductRequest(credentials, tenantId, "/producto/rolComercio/create", draft);
+  const datosObj = buildCreateDatosObject(draft);
+  const response = await sendProductRequest(credentials, tenantId, "/producto/rolComercio/create", datosObj);
   return response.data?.key ?? null;
 }
 
@@ -121,16 +181,6 @@ export async function updateProductInCocoa(
   cocoaKey: string,
   draft: CocoaProductDraft,
 ): Promise<void> {
-  await sendProductRequest(credentials, tenantId, "/producto/rolComercio/update", {
-    ...draft,
-    key: cocoaKey,
-    activo: true,
-    deleted: false,
-    have_oferta: false,
-    fecha_inicial_oferta: null,
-    fecha_final_oferta: null,
-    precio_oferta: 0,
-    porcentaje_oferta: 0,
-  } as CocoaProductDraft & { key: string });
+  const datosObj = buildUpdateDatosObject(draft, cocoaKey);
+  await sendProductRequest(credentials, tenantId, "/producto/rolComercio/update", datosObj);
 }
-

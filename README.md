@@ -115,6 +115,12 @@ Optional:
 - `SHOPIFY_APP_HOST` — hostname público de la app sin esquema (por defecto `VERCEL_URL` en producción).
 - `SHOPIFY_ADMIN_API_VERSION` (default `2024-10`)
 
+## Troubleshooting (admin embebido, consola, 502)
+
+- **`postMessage` / orígenes (`admin.shopify.com` vs tu dominio):** En el iframe del admin, App Bridge comunica padre e iframe; a veces el navegador muestra avisos en consola que **no bloquean** la app (comportamiento conocido con el admin unificado). Si la UI y los toasts funcionan, puedes ignorarlos. Abre la app desde **Tienda admin → Apps** (la URL debe incluir `host` y `shop` en la query).
+
+- **502 Bad Gateway:** Lo emite Vercel o el runtime, no es el mismo problema que el mensaje de `postMessage`. En el proyecto en Vercel: **Logs** (o **Runtime Logs**), filtra por código **502** y por ruta (`/dashboard`, `/api/sync/products`, etc.) y revisa el mensaje de error de esa petición y el deployment activo. Comprueba también que el último deploy terminó bien y que no hay variables de entorno faltantes en producción.
+
 ## Shopify configuration checklist (per store)
 
 1. In Shopify Admin, create/install a **Custom App** for that store.
@@ -144,5 +150,4 @@ Useful endpoints:
 
 ## Notes about Cocoa payload
 
-The integration sends `multipart/form-data` with the `datos` field as JSON string.
-When `url_imagen` is present, the file upload is optional according to the documentation update.
+The integration sends `multipart/form-data` with a `datos` field (JSON string) and, when `url_imagen` is **not** set in that JSON, an empty `archivo` part so the API still receives both fields required by the doc (see `docs/Webservice - Api producto Cocoa..md`: with `url_imagen`, the file upload is optional).
