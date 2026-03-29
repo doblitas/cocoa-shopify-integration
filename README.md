@@ -26,27 +26,34 @@ Referencias:
 
 ## Initial sync (productos ya existentes en Shopify)
 
-Para importar el catálogo **antes** de que disparen webhooks, necesitas:
+Para importar el catálogo **antes** de que disparen webhooks:
 
-1. En el tenant, **`adminAccessToken`** (`shpat_...`) con permisos **`read_products`** (y `read_inventory` si quieres stock).
-2. Una de estas formas de **autenticación** al llamar `POST /api/sync/products`:
-   - **Desde el admin embebido**: abre la app en Shopify → `/dashboard` → **Sincronizar todo**. Requiere en el servidor `NEXT_PUBLIC_SHOPIFY_API_KEY` y `SHOPIFY_API_SECRET` (misma app custom que la tienda) para validar el JWT.
-   - **Desde curl / CI**: define **`SYNC_SECRET`** y envía `Authorization: Bearer …` con query `?tenantId=…` (como antes).
+1. **Autenticación**
+   - **Admin embebido** (`/dashboard` → **Sincronizar todo**): usa **token exchange** (JWT → Admin API). Requiere `NEXT_PUBLIC_SHOPIFY_API_KEY` y `SHOPIFY_API_SECRET`. No hace falta `adminAccessToken` en el JSON para este flujo.
+   - **curl / CI** con **`SYNC_SECRET`**: `Authorization: Bearer …` y `?tenantId=…`. Aquí sigue haciendo falta **`adminAccessToken`** (`shpat_...`) en el tenant para la Admin API.
 
-Ejemplo curl (operador):
+2. **Lotes (evita timeout en Vercel)**  
+   Cada `POST` procesa como mucho **`batch`** productos (por defecto 35 o `SHOPIFY_SYNC_BATCH_SIZE`). La respuesta incluye `hasMore` y `nextCursor`; el dashboard encadena peticiones automáticamente. Con curl, repite el POST pasando `?cursor=…` hasta que `hasMore` sea `false`.
+
+Ejemplo curl (un solo lote):
 
 ```bash
 curl -sS -X POST \
-  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&max=5000" \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=40" \
+  -H "Authorization: Bearer TU_SYNC_SECRET"
+```
+
+Siguiente lote (copia `nextCursor` de la respuesta JSON anterior):
+
+```bash
+curl -sS -X POST \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=40&cursor=PASTE_AQUI" \
   -H "Authorization: Bearer TU_SYNC_SECRET"
 ```
 
 - Con **`SYNC_SECRET`**, `tenantId` debe coincidir con `SHOPIFY_TENANTS_JSON`.
-- Con **JWT de sesión**, el servidor infiere la tienda desde el token (no fuerces otra tienda con `tenantId` distinto).
-- `max` (opcional) limita cuántos productos procesar (por defecto 10000, máximo 50000 en código).
+- Con **JWT de sesión**, el servidor infiere la tienda desde el token.
 - Opcional: `SHOPIFY_ADMIN_API_VERSION` (por defecto `2024-10`).
-
-En Vercel, los proyectos tienen límite de tiempo de ejecución; catálogos enormes pueden necesitar varias ejecuciones con `max` menor o más tiempo en el plan.
 
 ## Tests
 

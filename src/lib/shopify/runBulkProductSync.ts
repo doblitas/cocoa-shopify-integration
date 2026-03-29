@@ -3,32 +3,56 @@ import { getCocoaProductKey, saveCocoaProductKey } from "@/lib/productLinks/stor
 import { saveSyncStatus } from "@/lib/syncStatus/store";
 import type { TenantConfig } from "@/lib/tenants";
 
-import { fetchAllShopifyProductsForSync } from "./fetchAdminProducts";
+import { fetchProductsPageRaw } from "./fetchAdminProducts";
 import { mapShopifyProductToCocoaDraft } from "./mapProduct";
+import { restProductToWebhookPayload } from "./restProduct";
+import type { ShopifyProductWebhookPayload } from "./types";
+import {
+  decodeBulkSyncCursor,
+  encodeBulkSyncCursor,
+  initialBulkSyncCursor,
+  type BulkSyncCursorV1,
+} from "./syncCursor";
 
 export type BulkSyncApiResponse = {
   ok: true;
   tenantId: string;
   shopDomain: string;
+  /** Productos procesados en este lote */
   fetched: number;
   created: number;
   updated: number;
   failed: number;
   errors: { shopifyProductId: number; message: string }[];
   errorsTruncated: boolean;
+  /** Si true, el cliente debe llamar POST de nuevo con nextCursor */
+  hasMore: boolean;
+  nextCursor: string | null;
 };
 
+const DEFAULT_BATCH_SIZE = 35;
+const DELAY_MS_PER_PRODUCT = 30;
+
+function getBatchSize(requested?: number): number {
+  const fromEnv = Number(process.env.SHOPIFY_SYNC_BATCH_SIZE?.trim());
+  const base = Number.isFinite(fromEnv) && fromEnv > 0 ? fromEnv : DEFAULT_BATCH_SIZE;
+  const n = requested && requested > 0 ? requested : base;
+  return Math.min(Math.max(1, Math.floor(n)), 250);
+}
+
 /**
- * Fetches all Shopify products for the tenant and creates/updates them in Cocoa.
- * Persists bulk sync status in Redis (or memory fallback).
+ * Un lote de sincronización: una o varias páginas de Shopify, como máximo `batchSize` productos por petición HTTP.
  *
- * @param shopifyAccessTokenOverride - Admin API token from `auth.tokenExchange` (embedded app / Dev Dashboard).
- *   If omitted, uses `tenant.adminAccessToken` (e.g. curl with SYNC_SECRET).
+ * @param shopifyAccessTokenOverride - Token Admin API (token exchange o shpat en JSON).
+ * @param cursorParam - Cursor base64url del lote anterior; si null, primera página.
  */
 export async function runBulkProductSync(
   tenant: TenantConfig,
-  maxProducts: number,
-  shopifyAccessTokenOverride?: string,
+  shopifyAccessTokenOverride: string | undefined,
+  options: {
+    cursor?: string | null;
+    batchSize?: number;
+  } = {},
 ): Promise<BulkSyncApiResponse> {
   const accessToken = shopifyAccessTokenOverride ?? tenant.adminAccessToken;
   if (!accessToken) {
@@ -38,32 +62,53 @@ export async function runBulkProductSync(
   }
 
   const apiVersion = process.env.SHOPIFY_ADMIN_API_VERSION ?? "2024-10";
+  const batchSize = getBatchSize(options.batchSize);
 
-  let payloads;
-  try {
-    payloads = await fetchAllShopifyProductsForSync({
-      shopDomain: tenant.shopDomain,
-      accessToken,
-      apiVersion,
-      maxProducts,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to fetch Shopify products";
-    await saveSyncStatus(tenant.tenantId, {
-      updatedAt: new Date().toISOString(),
-      source: "bulk_sync",
-      ok: false,
-      error: message,
-    });
-    throw new Error(message);
+  const cursor: BulkSyncCursorV1 =
+    decodeBulkSyncCursor(options.cursor ?? null) ?? initialBulkSyncCursor(tenant.shopDomain, apiVersion);
+
+  const { productsRaw, nextPageUrl } = await fetchProductsPageRaw({
+    pageUrl: cursor.pageUrl,
+    accessToken,
+  });
+
+  const payloads: ShopifyProductWebhookPayload[] = [];
+  for (const raw of productsRaw) {
+    const p = restProductToWebhookPayload(raw);
+    if (p) payloads.push(p);
   }
+
+  /** Página vacía: avanzar a siguiente URL si existe */
+  if (payloads.length === 0) {
+    if (nextPageUrl) {
+      const nextCur: BulkSyncCursorV1 = { v: 1, pageUrl: nextPageUrl, skip: 0 };
+      return emptyBatchResponse(tenant, true, encodeBulkSyncCursor(nextCur));
+    }
+    await saveFinalStatus(tenant.tenantId, 0, 0, 0, 0, true);
+    return {
+      ok: true,
+      tenantId: tenant.tenantId,
+      shopDomain: tenant.shopDomain,
+      fetched: 0,
+      created: 0,
+      updated: 0,
+      failed: 0,
+      errors: [],
+      errorsTruncated: false,
+      hasMore: false,
+      nextCursor: null,
+    };
+  }
+
+  const slice = payloads.slice(cursor.skip, cursor.skip + batchSize);
+  const processedEnd = cursor.skip + slice.length;
 
   const errors: { shopifyProductId: number; message: string }[] = [];
   let created = 0;
   let updated = 0;
   let failed = 0;
 
-  for (const payload of payloads) {
+  for (const payload of slice) {
     try {
       const draft = mapShopifyProductToCocoaDraft(payload, tenant);
       const existing = await getCocoaProductKey(tenant.tenantId, payload.id);
@@ -86,31 +131,90 @@ export async function runBulkProductSync(
       });
     }
 
-    await new Promise((r) => setTimeout(r, 75));
+    await new Promise((r) => setTimeout(r, DELAY_MS_PER_PRODUCT));
   }
 
-  await saveSyncStatus(tenant.tenantId, {
-    updatedAt: new Date().toISOString(),
-    source: "bulk_sync",
-    ok: failed === 0,
-    error: failed > 0 ? `${failed} product(s) failed to sync` : undefined,
-    bulk: {
-      fetched: payloads.length,
-      created,
-      updated,
-      failed,
-    },
-  });
+  let hasMore = false;
+  let nextCursor: string | null = null;
+
+  if (processedEnd < payloads.length) {
+    hasMore = true;
+    nextCursor = encodeBulkSyncCursor({ v: 1, pageUrl: cursor.pageUrl, skip: processedEnd });
+  } else if (nextPageUrl) {
+    hasMore = true;
+    nextCursor = encodeBulkSyncCursor({ v: 1, pageUrl: nextPageUrl, skip: 0 });
+  }
+
+  if (!hasMore) {
+    await saveFinalStatus(tenant.tenantId, slice.length, created, updated, failed, failed === 0);
+  } else {
+    await saveSyncStatus(tenant.tenantId, {
+      updatedAt: new Date().toISOString(),
+      source: "bulk_sync",
+      ok: true,
+      error: "Sincronización en curso: hay más lotes pendientes.",
+      bulk: {
+        fetched: slice.length,
+        created,
+        updated,
+        failed,
+      },
+    });
+  }
 
   return {
     ok: true,
     tenantId: tenant.tenantId,
     shopDomain: tenant.shopDomain,
-    fetched: payloads.length,
+    fetched: slice.length,
     created,
     updated,
     failed,
     errors: errors.slice(0, 50),
     errorsTruncated: errors.length > 50,
+    hasMore,
+    nextCursor,
   };
+}
+
+function emptyBatchResponse(
+  tenant: TenantConfig,
+  hasMore: boolean,
+  nextCursor: string | null,
+): BulkSyncApiResponse {
+  return {
+    ok: true,
+    tenantId: tenant.tenantId,
+    shopDomain: tenant.shopDomain,
+    fetched: 0,
+    created: 0,
+    updated: 0,
+    failed: 0,
+    errors: [],
+    errorsTruncated: false,
+    hasMore,
+    nextCursor,
+  };
+}
+
+async function saveFinalStatus(
+  tenantId: string,
+  fetched: number,
+  created: number,
+  updated: number,
+  failed: number,
+  ok: boolean,
+): Promise<void> {
+  await saveSyncStatus(tenantId, {
+    updatedAt: new Date().toISOString(),
+    source: "bulk_sync",
+    ok,
+    error: failed > 0 ? `${failed} product(s) failed in last batch` : undefined,
+    bulk: {
+      fetched,
+      created,
+      updated,
+      failed,
+    },
+  });
 }

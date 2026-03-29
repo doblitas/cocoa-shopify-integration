@@ -12,6 +12,34 @@ type ProductsResponse = {
 };
 
 /**
+ * Una sola petición GET a la URL de productos (página de Shopify).
+ */
+export async function fetchProductsPageRaw(options: {
+  pageUrl: string;
+  accessToken: string;
+}): Promise<{
+  productsRaw: unknown[];
+  nextPageUrl: string | null;
+}> {
+  const response = await fetch(options.pageUrl, {
+    headers: {
+      "X-Shopify-Access-Token": options.accessToken,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Shopify products API ${response.status}: ${text}`);
+  }
+
+  const data = (await response.json()) as ProductsResponse;
+  const productsRaw = data.products ?? [];
+  const nextPageUrl = parseNextPageUrlFromLinkHeader(response.headers.get("link"));
+  return { productsRaw, nextPageUrl };
+}
+
+/**
  * Lista todos los productos vía Admin REST API con paginación por Link header.
  */
 export async function fetchAllShopifyProductsForSync(options: {

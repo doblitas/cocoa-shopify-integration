@@ -28,7 +28,10 @@ export async function POST(request: Request) {
   const syncSecret = process.env.SYNC_SECRET?.trim() ?? "";
   const url = new URL(request.url);
   const tenantIdParam = url.searchParams.get("tenantId")?.trim() ?? "";
-  const maxProducts = Math.min(Number(url.searchParams.get("max") ?? "10000") || 10000, 50_000);
+  const cursorParam = url.searchParams.get("cursor")?.trim() ?? null;
+  const batchParam = url.searchParams.get("batch")?.trim();
+  const batchSize =
+    batchParam && Number(batchParam) > 0 ? Math.min(Math.floor(Number(batchParam)), 250) : undefined;
 
   let tenant = null as ReturnType<typeof getTenantByTenantId>;
   /** Set when auth is session JWT: online access token from token exchange (Dev Dashboard / embedded app). */
@@ -100,7 +103,10 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await runBulkProductSync(tenant, maxProducts, sessionExchangeAccessToken);
+    const result = await runBulkProductSync(tenant, sessionExchangeAccessToken, {
+      cursor: cursorParam,
+      batchSize,
+    });
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
