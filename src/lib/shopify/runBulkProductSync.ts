@@ -21,14 +21,19 @@ export type BulkSyncApiResponse = {
 /**
  * Fetches all Shopify products for the tenant and creates/updates them in Cocoa.
  * Persists bulk sync status in Redis (or memory fallback).
+ *
+ * @param shopifyAccessTokenOverride - Admin API token from `auth.tokenExchange` (embedded app / Dev Dashboard).
+ *   If omitted, uses `tenant.adminAccessToken` (e.g. curl with SYNC_SECRET).
  */
 export async function runBulkProductSync(
   tenant: TenantConfig,
   maxProducts: number,
+  shopifyAccessTokenOverride?: string,
 ): Promise<BulkSyncApiResponse> {
-  if (!tenant.adminAccessToken) {
+  const accessToken = shopifyAccessTokenOverride ?? tenant.adminAccessToken;
+  if (!accessToken) {
     throw new Error(
-      "This tenant has no adminAccessToken. Add the Shopify Admin API access token (shpat_...) to SHOPIFY_TENANTS_JSON for bulk sync.",
+      "No Shopify Admin API access token: use embedded admin (session token exchange) or add adminAccessToken (shpat_...) to SHOPIFY_TENANTS_JSON for SYNC_SECRET.",
     );
   }
 
@@ -38,7 +43,7 @@ export async function runBulkProductSync(
   try {
     payloads = await fetchAllShopifyProductsForSync({
       shopDomain: tenant.shopDomain,
-      accessToken: tenant.adminAccessToken,
+      accessToken,
       apiVersion,
       maxProducts,
     });

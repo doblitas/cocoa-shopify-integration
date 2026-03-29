@@ -1,3 +1,4 @@
+import { RequestedTokenType } from "@shopify/shopify-api";
 import { NextResponse } from "next/server";
 
 import { destToShopDomain } from "@/lib/shopify/destToShopDomain";
@@ -30,6 +31,8 @@ export async function POST(request: Request) {
   const maxProducts = Math.min(Number(url.searchParams.get("max") ?? "10000") || 10000, 50_000);
 
   let tenant = null as ReturnType<typeof getTenantByTenantId>;
+  /** Set when auth is session JWT: online access token from token exchange (Dev Dashboard / embedded app). */
+  let sessionExchangeAccessToken: string | undefined;
 
   if (syncSecret && token === syncSecret) {
     if (!tenantIdParam) {
@@ -72,6 +75,24 @@ export async function POST(request: Request) {
         { status: 403 },
       );
     }
+
+    try {
+      const { session } = await shopify.auth.tokenExchange({
+        shop: shopDomain,
+        sessionToken: token,
+        requestedTokenType: RequestedTokenType.OnlineAccessToken,
+      });
+      if (!session.accessToken) {
+        return NextResponse.json(
+          { ok: false, error: "Token exchange returned no access token" },
+          { status: 502 },
+        );
+      }
+      sessionExchangeAccessToken = session.accessToken;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Token exchange failed";
+      return NextResponse.json({ ok: false, error: `Session token exchange failed: ${msg}` }, { status: 502 });
+    }
   }
 
   if (!tenant) {
@@ -79,14 +100,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await runBulkProductSync(tenant, maxProducts);
+    const result = await runBulkProductSync(tenant, maxProducts, sessionExchangeAccessToken);
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    const isMissingAdminToken = message.includes("adminAccessToken");
+    const isMissingAccess = message.includes("No Shopify Admin API access token");
     return NextResponse.json(
       { ok: false, error: message },
-      { status: isMissingAdminToken ? 400 : 502 },
+      { status: isMissingAccess ? 400 : 502 },
     );
   }
 }
