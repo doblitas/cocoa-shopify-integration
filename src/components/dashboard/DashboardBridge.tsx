@@ -48,7 +48,7 @@ type SyncOk = {
   nextCursor?: string | null;
 };
 
-const SYNC_BATCH_SIZE = 35;
+const SYNC_BATCH_SIZE = 12;
 const SYNC_MAX_BATCHES = 500;
 
 async function parseJsonFromSyncResponse(res: Response): Promise<unknown> {
@@ -116,7 +116,6 @@ export function DashboardBridge() {
     setSyncError(null);
     setSyncing(true);
     try {
-      const token = await shopify.idToken();
       let cursor: string | undefined;
       let totalCreated = 0;
       let totalUpdated = 0;
@@ -130,6 +129,8 @@ export function DashboardBridge() {
           setSyncError(msg);
           return;
         }
+        // Session JWT expires ~60s; refresh each batch so token exchange on the server succeeds.
+        const token = await shopify.idToken();
         const params = new URLSearchParams();
         params.set("batch", String(SYNC_BATCH_SIZE));
         if (cursor) {

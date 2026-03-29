@@ -33,13 +33,14 @@ Para importar el catálogo **antes** de que disparen webhooks:
    - **curl / CI** con **`SYNC_SECRET`**: `Authorization: Bearer …` y `?tenantId=…`. Aquí sigue haciendo falta **`adminAccessToken`** (`shpat_...`) en el tenant para la Admin API.
 
 2. **Lotes (evita timeout en Vercel)**  
-   Cada `POST` procesa como mucho **`batch`** productos (por defecto 35 o `SHOPIFY_SYNC_BATCH_SIZE`). La respuesta incluye `hasMore` y `nextCursor`; el dashboard encadena peticiones automáticamente. Con curl, repite el POST pasando `?cursor=…` hasta que `hasMore` sea `false`.
+   Cada `POST` procesa como mucho **`batch`** productos (por defecto **12**, o el valor de `SHOPIFY_SYNC_BATCH_SIZE` en el servidor). La respuesta incluye `hasMore` y `nextCursor`; el dashboard encadena peticiones automáticamente. Con curl, repite el POST pasando `?cursor=…` hasta que `hasMore` sea `false`.  
+   Si una invocación sigue llegando al límite de **300s** en Vercel (p. ej. Cocoa muy lento), **baja** `SHOPIFY_SYNC_BATCH_SIZE` en el entorno de despliegue hasta que cada `POST` complete por debajo del techo.
 
 Ejemplo curl (un solo lote):
 
 ```bash
 curl -sS -X POST \
-  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=40" \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=12" \
   -H "Authorization: Bearer TU_SYNC_SECRET"
 ```
 
@@ -47,7 +48,7 @@ Siguiente lote (copia `nextCursor` de la respuesta JSON anterior):
 
 ```bash
 curl -sS -X POST \
-  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=40&cursor=PASTE_AQUI" \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=12&cursor=PASTE_AQUI" \
   -H "Authorization: Bearer TU_SYNC_SECRET"
 ```
 

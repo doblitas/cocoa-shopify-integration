@@ -30,7 +30,7 @@ export type BulkSyncApiResponse = {
   nextCursor: string | null;
 };
 
-const DEFAULT_BATCH_SIZE = 35;
+const DEFAULT_BATCH_SIZE = 12;
 const DELAY_MS_PER_PRODUCT = 30;
 
 function getBatchSize(requested?: number): number {
