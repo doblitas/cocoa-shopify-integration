@@ -33,8 +33,8 @@ Para importar el catálogo **antes** de que disparen webhooks:
    - **curl / CI** con **`SYNC_SECRET`**: `Authorization: Bearer …` y `?tenantId=…`. Aquí sigue haciendo falta **`adminAccessToken`** (`shpat_...`) en el tenant para la Admin API.
 
 2. **Lotes (evita timeout en Vercel)**  
-   Cada `POST` procesa como mucho **`batch`** productos (por defecto **12**, o el valor de `SHOPIFY_SYNC_BATCH_SIZE` en el servidor). La respuesta incluye `hasMore` y `nextCursor`; el dashboard encadena peticiones automáticamente. Con curl, repite el POST pasando `?cursor=…` hasta que `hasMore` sea `false`.  
-   Si una invocación sigue llegando al límite de **300s** en Vercel (p. ej. Cocoa muy lento), **baja** `SHOPIFY_SYNC_BATCH_SIZE` en el entorno de despliegue hasta que cada `POST` complete por debajo del techo.
+   Cada `POST` procesa como mucho **`batch`** productos (por defecto **12**, o `SHOPIFY_SYNC_BATCH_SIZE`). Además, el bucle hacia Cocoa se corta al cumplir **`SHOPIFY_SYNC_BUDGET_MS`** (por defecto **240000** ms = 4 min) para responder **antes** del límite duro de 300s de Vercel; el cliente vuelve a llamar con `nextCursor` y sigue donde quedó.  
+   Si aún ves **504**, baja `SHOPIFY_SYNC_BATCH_SIZE` y/o `SHOPIFY_SYNC_BUDGET_MS` en el despliegue.
 
 Ejemplo curl (un solo lote):
 

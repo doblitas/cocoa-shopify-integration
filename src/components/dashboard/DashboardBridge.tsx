@@ -159,8 +159,9 @@ export function DashboardBridge() {
         batchNum += 1;
 
         if (json.hasMore && json.nextCursor) {
+          const failPart = json.failed > 0 ? `, ${json.failed} error(es)` : "";
           shopify.toast.show(
-            `Lote ${batchNum}: ${json.created} creados, ${json.updated} actualizados… (siguiente lote)`,
+            `Lote ${batchNum}: ${json.fetched} procesados · ${json.created} creados · ${json.updated} actualizados${failPart}… (siguiente lote)`,
             { duration: 4000 },
           );
           cursor = json.nextCursor;

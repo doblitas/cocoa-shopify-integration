@@ -32,6 +32,17 @@ export type BulkSyncApiResponse = {
 
 const DEFAULT_BATCH_SIZE = 12;
 const DELAY_MS_PER_PRODUCT = 30;
+/** Stop Cocoa loop before Vercel kills the function (default 300s). */
+const DEFAULT_SYNC_BUDGET_MS = 240_000;
+
+function getSyncBudgetMs(): number {
+  const raw = process.env.SHOPIFY_SYNC_BUDGET_MS?.trim();
+  const n = raw ? Number(raw) : DEFAULT_SYNC_BUDGET_MS;
+  if (!Number.isFinite(n) || n < 10_000) {
+    return DEFAULT_SYNC_BUDGET_MS;
+  }
+  return Math.min(Math.floor(n), 295_000);
+}
 
 function getBatchSize(requested?: number): number {
   const fromEnv = Number(process.env.SHOPIFY_SYNC_BATCH_SIZE?.trim());
@@ -101,14 +112,24 @@ export async function runBulkProductSync(
   }
 
   const slice = payloads.slice(cursor.skip, cursor.skip + batchSize);
-  const processedEnd = cursor.skip + slice.length;
+  const budgetMs = getSyncBudgetMs();
+  const started = Date.now();
 
   const errors: { shopifyProductId: number; message: string }[] = [];
   let created = 0;
   let updated = 0;
   let failed = 0;
 
-  for (const payload of slice) {
+  /** First index in `slice` not yet processed (set when we hit the time budget). */
+  let budgetStopIndexInSlice: number | null = null;
+
+  for (let i = 0; i < slice.length; i++) {
+    if (Date.now() - started > budgetMs) {
+      budgetStopIndexInSlice = i;
+      break;
+    }
+
+    const payload = slice[i]!;
     try {
       const draft = mapShopifyProductToCocoaDraft(payload, tenant);
       const existing = await getCocoaProductKey(tenant.tenantId, payload.id);
@@ -132,6 +153,39 @@ export async function runBulkProductSync(
     }
 
     await new Promise((r) => setTimeout(r, DELAY_MS_PER_PRODUCT));
+  }
+
+  const completedInSlice =
+    budgetStopIndexInSlice === null ? slice.length : budgetStopIndexInSlice;
+  const processedEnd = cursor.skip + completedInSlice;
+
+  if (budgetStopIndexInSlice !== null) {
+    const nextCur: BulkSyncCursorV1 = { v: 1, pageUrl: cursor.pageUrl, skip: processedEnd };
+    await saveSyncStatus(tenant.tenantId, {
+      updatedAt: new Date().toISOString(),
+      source: "bulk_sync",
+      ok: true,
+      error: "Sincronización en curso: límite de tiempo por petición; continúa el siguiente lote.",
+      bulk: {
+        fetched: completedInSlice,
+        created,
+        updated,
+        failed,
+      },
+    });
+    return {
+      ok: true,
+      tenantId: tenant.tenantId,
+      shopDomain: tenant.shopDomain,
+      fetched: completedInSlice,
+      created,
+      updated,
+      failed,
+      errors: errors.slice(0, 50),
+      errorsTruncated: errors.length > 50,
+      hasMore: true,
+      nextCursor: encodeBulkSyncCursor(nextCur),
+    };
   }
 
   let hasMore = false;
