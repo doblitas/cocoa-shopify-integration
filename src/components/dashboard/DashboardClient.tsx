@@ -3,7 +3,7 @@
 import { AppProvider, BlockStack, Card, InlineStack, Spinner, Text } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { useRouter } from "next/router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { DashboardBridge } from "@/components/dashboard/DashboardBridge";
 
@@ -15,23 +15,29 @@ function firstQueryParam(v: string | string[] | undefined): string {
 /**
  * Espera a que App Bridge defina window.shopify antes de montar useAppBridge
  * (evita error en hidratación y recargas en bucle dentro del iframe).
+ *
+ * El contexto embebido (iframe + host/shop) solo se calcula en useEffect para no
+ * leer `window` durante el render: así servidor y primer paint del cliente coinciden (evita React #418).
  */
 export function DashboardClient() {
   const router = useRouter();
-  const embedOk = useMemo((): boolean | null => {
-    if (!router.isReady) return null;
-    if (typeof window === "undefined") return null;
+  /** null = aún no evaluado en el cliente (misma UI que SSR / primer hidrato). */
+  const [embedOk, setEmbedOk] = useState<boolean | null>(null);
+  const [bridgeReady, setBridgeReady] = useState(false);
+  const [initError, setInitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+
     const host = firstQueryParam(router.query.host).trim();
     const shop = firstQueryParam(router.query.shop).trim();
     const inIframe = window.parent !== window;
     const isLocalDev =
       process.env.NODE_ENV === "development" &&
       (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
-    return isLocalDev || (inIframe && Boolean(host && shop));
+    const ok = isLocalDev || (inIframe && Boolean(host && shop));
+    queueMicrotask(() => setEmbedOk(ok));
   }, [router.isReady, router.query]);
-
-  const [bridgeReady, setBridgeReady] = useState(false);
-  const [initError, setInitError] = useState<string | null>(null);
 
   useEffect(() => {
     if (embedOk !== true) return;
