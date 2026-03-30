@@ -67,7 +67,7 @@ function getBatchSize(requested?: number): number {
   return Math.min(Math.max(1, Math.floor(n)), 250);
 }
 
-function getOverallSyncMaxMs(): number {
+export function getOverallSyncMaxMs(): number {
   const raw = process.env.SHOPIFY_SYNC_OVERALL_MAX_MS?.trim();
   if (raw) {
     const n = Number(raw);

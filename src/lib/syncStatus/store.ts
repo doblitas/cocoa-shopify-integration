@@ -12,7 +12,7 @@ const memoryStore = new Map<string, string>();
 
 export type SyncStatusSnapshot = {
   updatedAt: string;
-  source: "webhook" | "bulk_sync";
+  source: "webhook" | "bulk_sync" | "uninstall";
   ok: boolean;
   shopifyProductId?: number;
   action?: "create" | "update" | "remove" | "skip";

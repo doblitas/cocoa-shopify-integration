@@ -91,6 +91,54 @@ export async function listSyncedProductLinks(tenantId: string): Promise<ListSync
 }
 
 /**
+ * Todos los vínculos (sin tope del dashboard). Para desinstalación masiva u operaciones internas.
+ */
+export async function listAllSyncedProductLinks(tenantId: string): Promise<SyncedProductLink[]> {
+  const pattern = `tenant:${tenantId}:shopify-product:*:cocoa-key`;
+
+  if (redis) {
+    const keys: string[] = [];
+    let cursor = "0";
+    do {
+      const [nextCursor, found] = await redis.scan(cursor, { match: pattern, count: 200 });
+      cursor = nextCursor;
+      keys.push(...found);
+    } while (cursor !== "0");
+
+    keys.sort();
+    const items: SyncedProductLink[] = [];
+
+    for (let i = 0; i < keys.length; i += 100) {
+      const batch = keys.slice(i, i + 100);
+      const vals = await redis.mget<(string | null)[]>(...batch);
+      batch.forEach((key, idx) => {
+        const cocoaKey = vals[idx];
+        const shopifyProductId = parseProductIdFromRedisKey(tenantId, key);
+        if (shopifyProductId != null && cocoaKey) {
+          items.push({ shopifyProductId, cocoaKey });
+        }
+      });
+    }
+
+    items.sort((a, b) => a.shopifyProductId - b.shopifyProductId);
+    return items;
+  }
+
+  const prefix = `tenant:${tenantId}:shopify-product:`;
+  const suffix = `:cocoa-key`;
+  const raw: SyncedProductLink[] = [];
+  for (const [key, cocoaKey] of memoryStore.entries()) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const shopifyProductId = parseProductIdFromRedisKey(tenantId, key);
+    if (shopifyProductId != null) {
+      raw.push({ shopifyProductId, cocoaKey });
+    }
+  }
+  raw.sort((a, b) => a.shopifyProductId - b.shopifyProductId);
+  return raw;
+}
+
+/**
  * Todos los `shopifyProductId` con vínculo en Redis (scan completo; solo IDs, sin límite de listado del dashboard).
  */
 export async function listAllLinkedShopifyProductIds(tenantId: string): Promise<number[]> {

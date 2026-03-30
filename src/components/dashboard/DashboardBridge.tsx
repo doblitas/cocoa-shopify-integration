@@ -7,9 +7,11 @@ import {
   Button,
   Card,
   InlineStack,
+  Modal,
   Page,
   Spinner,
   Text,
+  TextField,
   Badge,
 } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
@@ -21,7 +23,7 @@ type ApiOk = {
   shopDomain?: string;
   status: {
     updatedAt: string;
-    source: "webhook" | "bulk_sync";
+    source: "webhook" | "bulk_sync" | "uninstall";
     ok: boolean;
     shopifyProductId?: number;
     action?: "create" | "update" | "remove" | "skip";
@@ -85,6 +87,21 @@ type SyncOk = {
   warning?: string;
 };
 
+type UninstallOk = {
+  ok: true;
+  tenantId: string;
+  shopDomain: string;
+  deleted: number;
+  failed: number;
+  remainingAfterBatch: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  stalled?: boolean;
+  warning?: string;
+};
+
+const UNINSTALL_CONFIRM_PHRASE = "DESINSTALAR";
+
 async function parseJsonFromSyncResponse(res: Response): Promise<unknown> {
   const text = await res.text();
   try {
@@ -121,6 +138,9 @@ export function DashboardBridge() {
   const [reconciliation, setReconciliation] = useState<ReconciliationOk | null>(null);
   const [reconciliationLoading, setReconciliationLoading] = useState(false);
   const [reconciliationError, setReconciliationError] = useState<string | null>(null);
+  const [uninstallModalOpen, setUninstallModalOpen] = useState(false);
+  const [uninstallConfirm, setUninstallConfirm] = useState("");
+  const [uninstalling, setUninstalling] = useState(false);
 
   const load = useCallback(
     async (mode: "initial" | "refresh") => {
@@ -228,6 +248,89 @@ export function DashboardBridge() {
     }
   }, [shopify, load]);
 
+  const handleUninstall = useCallback(async () => {
+    setUninstallModalOpen(false);
+    setUninstallConfirm("");
+    setUninstalling(true);
+    try {
+      let cursor: string | null = null;
+      let totalDeleted = 0;
+      let totalFailed = 0;
+      let step = 0;
+      const maxSteps = 5000;
+
+      while (step < maxSteps) {
+        step += 1;
+        const token = await shopify.idToken();
+        const qs = cursor ? `?cursor=${encodeURIComponent(cursor)}` : "";
+        const res = await fetch(`/api/dashboard/uninstall-connection${qs}`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ confirm: true }),
+        });
+        const parsed = (await parseJsonFromSyncResponse(res)) as UninstallOk | ApiErr;
+
+        if (!res.ok || !("ok" in parsed) || !parsed.ok) {
+          const msg =
+            "error" in parsed && typeof parsed.error === "string"
+              ? parsed.error
+              : "Error al desinstalar la conexión";
+          shopify.toast.show(msg, { isError: true, duration: 10000 });
+          return;
+        }
+
+        const json = parsed as UninstallOk;
+        totalDeleted += json.deleted;
+        totalFailed += json.failed;
+
+        if (json.stalled) {
+          shopify.toast.show(json.warning ?? "Desinstalación detenida por errores en Cocoa.", {
+            isError: true,
+            duration: 12000,
+          });
+          break;
+        }
+
+        if (json.warning && json.hasMore) {
+          shopify.toast.show(json.warning, { duration: 9000 });
+        }
+
+        if (!json.hasMore) {
+          shopify.toast.show(
+            `Desinstalación: ${totalDeleted} producto(s) marcados en Cocoa y vínculos borrados${
+              totalFailed > 0 ? ` · ${totalFailed} con error` : ""
+            }`,
+            { duration: 10000 },
+          );
+          break;
+        }
+
+        cursor = json.nextCursor;
+        if (cursor === null && json.hasMore) {
+          shopify.toast.show("Continúa: quedan vínculos por procesar.", { duration: 8000 });
+          break;
+        }
+      }
+
+      if (step >= maxSteps) {
+        shopify.toast.show("Límite de pasos alcanzado; recarga y vuelve a intentar si falta algo.", {
+          isError: true,
+          duration: 10000,
+        });
+      }
+
+      await load("refresh");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Error desconocido";
+      shopify.toast.show(msg, { isError: true, duration: 10000 });
+    } finally {
+      setUninstalling(false);
+    }
+  }, [shopify, load]);
+
   useEffect(() => {
     void load("initial");
   }, [load]);
@@ -290,14 +393,14 @@ export function DashboardBridge() {
         primaryAction={{
           content: "Sincronizar todo",
           loading: syncing,
-          disabled: loading || syncing,
+          disabled: loading || syncing || uninstalling,
           onAction: handleSyncAll,
         }}
         secondaryActions={[
           {
             content: loading ? "Cargando…" : "Actualizar estado",
             loading: refreshing,
-            disabled: loading || refreshing || syncing,
+            disabled: loading || refreshing || syncing || uninstalling,
             onAction: () => void load("refresh"),
           },
         ]}
@@ -362,7 +465,11 @@ export function DashboardBridge() {
                         {data.status.ok ? "OK" : "Error"}
                       </Badge>
                       <Text as="span" variant="bodySm" tone="subdued">
-                        {data.status.source === "webhook" ? "Webhook" : "Sync masivo"}
+                        {data.status.source === "webhook"
+                          ? "Webhook"
+                          : data.status.source === "uninstall"
+                            ? "Desinstalación"
+                            : "Sync masivo"}
                       </Text>
                     </InlineStack>
                     <Text as="p" variant="bodySm">
@@ -407,7 +514,7 @@ export function DashboardBridge() {
                 <Button
                   onClick={() => void handleReconcile()}
                   loading={reconciliationLoading}
-                  disabled={loading || refreshing || syncing}
+                  disabled={loading || refreshing || syncing || uninstalling}
                 >
                   Reconciliar ahora
                 </Button>
@@ -556,8 +663,75 @@ export function DashboardBridge() {
               </BlockStack>
             </Card>
           ) : null}
+
+          {!loading && !error && data ? (
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Zona peligrosa
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Desinstalar la conexión marca como eliminados en Cocoa todos los productos que esta app
+                  sincronizó (misma acción que al quitar stock según reglas) y borra los vínculos en el servidor.
+                  No elimina artículos creados solo en Cocoa ni el catálogo completo del panel Cocoa si existía
+                  fuera de esta integración.
+                </Text>
+                <Button
+                  tone="critical"
+                  loading={uninstalling}
+                  disabled={loading || refreshing || syncing || uninstalling}
+                  onClick={() => {
+                    setUninstallConfirm("");
+                    setUninstallModalOpen(true);
+                  }}
+                >
+                  Desinstalar conexión
+                </Button>
+              </BlockStack>
+            </Card>
+          ) : null}
         </BlockStack>
       </Page>
+
+      <Modal
+        open={uninstallModalOpen}
+        onClose={() => {
+          setUninstallModalOpen(false);
+          setUninstallConfirm("");
+        }}
+        title="¿Desinstalar conexión con Cocoa?"
+        primaryAction={{
+          content: "Confirmar desinstalación",
+          destructive: true,
+          disabled: uninstallConfirm.trim() !== UNINSTALL_CONFIRM_PHRASE,
+          onAction: () => void handleUninstall(),
+        }}
+        secondaryActions={[
+          {
+            content: "Cancelar",
+            onAction: () => {
+              setUninstallModalOpen(false);
+              setUninstallConfirm("");
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">
+              Esta acción intentará marcar como eliminados en Cocoa <strong>todos</strong> los productos con
+              vínculo guardado por esta app y borrará esos vínculos. Puede tardar varios minutos y requerir
+              varios intentos si el servidor corta por tiempo (Vercel).
+            </Text>
+            <TextField
+              label={`Escribe ${UNINSTALL_CONFIRM_PHRASE} para habilitar el botón`}
+              value={uninstallConfirm}
+              onChange={setUninstallConfirm}
+              autoComplete="off"
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
     </AppProvider>
   );
 }
