@@ -4,14 +4,12 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import {
   AppProvider,
   BlockStack,
-  Box,
   Card,
   InlineStack,
   Page,
   Spinner,
   Text,
   Badge,
-  Thumbnail,
 } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { useCallback, useEffect, useState } from "react";
@@ -44,7 +42,7 @@ type SyncedProductsOk = {
     shopifyProductId: number;
     cocoaKey: string;
     title?: string;
-    imageUrl?: string | null;
+    sku?: string | null;
   }[];
   truncated?: boolean;
   totalKeys?: number;
@@ -94,7 +92,7 @@ export function DashboardBridge() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [syncedRows, setSyncedRows] = useState<
-    { shopifyProductId: number; cocoaKey: string; title?: string; imageUrl?: string | null }[]
+    { shopifyProductId: number; cocoaKey: string; title?: string; sku?: string | null }[]
   >([]);
   const [syncedMeta, setSyncedMeta] = useState<{ truncated: boolean; totalKeys: number } | null>(null);
   const [syncedError, setSyncedError] = useState<string | null>(null);
@@ -403,52 +401,30 @@ export function DashboardBridge() {
                     <div style={{ maxHeight: 420, overflowY: "auto" }}>
                       <BlockStack gap="200">
                         {syncedRows.map((row) => (
-                          <InlineStack
-                            key={row.shopifyProductId}
-                            gap="300"
-                            blockAlign="center"
-                            wrap={false}
-                          >
-                            {row.imageUrl ? (
-                              <Thumbnail
-                                source={row.imageUrl}
-                                alt={row.title?.trim() || `Producto ${row.shopifyProductId}`}
-                                size="small"
-                              />
-                            ) : (
-                              <Box
-                                width="40px"
-                                minHeight="40px"
-                                background="bg-fill-secondary"
-                                borderRadius="200"
-                              />
-                            )}
-                            <BlockStack gap="100">
-                              <Text as="p" variant="bodyMd" fontWeight="semibold">
-                                {row.title?.trim() ? row.title : `Producto #${row.shopifyProductId}`}
+                          <BlockStack key={row.shopifyProductId} gap="100">
+                            <Text as="p" variant="bodyMd" fontWeight="semibold">
+                              {row.title?.trim() ? row.title : "—"}
+                            </Text>
+                            <InlineStack gap="300" blockAlign="center" wrap>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                SKU: <strong>{row.sku?.trim() ? row.sku : "—"}</strong>
                               </Text>
-                              <InlineStack gap="200" blockAlign="center" wrap>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  Shopify <strong>#{row.shopifyProductId}</strong>
-                                  {data.shopDomain ? (
-                                    <>
-                                      {" "}
-                                      <a
-                                        href={`https://${data.shopDomain}/admin/products/${row.shopifyProductId}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                      >
-                                        Abrir en admin
-                                      </a>
-                                    </>
-                                  ) : null}
-                                </Text>
-                                <Text as="span" variant="bodySm" tone="subdued">
-                                  Cocoa: <code>{row.cocoaKey}</code>
-                                </Text>
-                              </InlineStack>
-                            </BlockStack>
-                          </InlineStack>
+                              <Text as="span" variant="bodySm" tone="subdued">
+                                Cocoa: <code>{row.cocoaKey}</code>
+                              </Text>
+                              {data.shopDomain ? (
+                                <a
+                                  href={`https://${data.shopDomain}/admin/products/${row.shopifyProductId}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <Text as="span" variant="bodySm">
+                                    Editar en Shopify
+                                  </Text>
+                                </a>
+                              ) : null}
+                            </InlineStack>
+                          </BlockStack>
                         ))}
                       </BlockStack>
                     </div>

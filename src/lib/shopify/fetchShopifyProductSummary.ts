@@ -1,59 +1,98 @@
 const DEFAULT_API_VERSION = "2024-10";
 
+/** Productos por petición GraphQL (evita timeouts con miles de enlaces). */
+const GRAPHQL_NODES_BATCH = 50;
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-type ProductJson = {
-  product?: {
-    title?: unknown;
-    image?: { src?: unknown } | null;
-    images?: { src?: unknown }[];
-  };
-};
-
-function parseProductSummary(raw: unknown): { title: string; imageUrl: string | null } | null {
-  if (!raw || typeof raw !== "object") return null;
-  const p = (raw as ProductJson).product;
-  if (!p || typeof p !== "object") return null;
-  const title = typeof p.title === "string" ? p.title : "";
-
-  let imageUrl: string | null = null;
-  if (p.image && typeof p.image === "object" && typeof p.image.src === "string" && p.image.src) {
-    imageUrl = p.image.src;
-  } else if (Array.isArray(p.images) && p.images.length > 0) {
-    const first = p.images[0];
-    if (first && typeof first === "object" && typeof first.src === "string" && first.src) {
-      imageUrl = first.src;
-    }
-  }
-
-  return { title: title || "—", imageUrl };
+function toProductGid(productId: number): string {
+  return `gid://shopify/Product/${productId}`;
 }
 
+type GraphQLNodesResponse = {
+  data?: {
+    nodes?: unknown[];
+  };
+  errors?: unknown;
+};
+
 /**
- * GET /admin/api/{version}/products/{id}.json — título e imagen para el dashboard.
+ * Varias peticiones GraphQL con `nodes` (título + SKU primera variante), sin imágenes.
  */
-export async function fetchShopifyProductSummary(options: {
+async function fetchProductTitleAndSkuBatch(options: {
   shopDomain: string;
   accessToken: string;
-  apiVersion?: string;
-  productId: number;
-}): Promise<{ title: string; imageUrl: string | null } | null> {
+  apiVersion: string;
+  productIds: number[];
+}): Promise<Map<number, { title: string; sku: string | null }>> {
   const shop = options.shopDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  const apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
-  const url = `https://${shop}/admin/api/${apiVersion}/products/${options.productId}.json`;
+  const url = `https://${shop}/admin/api/${options.apiVersion}/graphql.json`;
+  const ids = options.productIds.map(toProductGid);
+
+  const query = `
+    query SyncedProductsBatch($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on Product {
+          id
+          title
+          variants(first: 1) {
+            edges {
+              node {
+                sku
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
   const response = await fetch(url, {
+    method: "POST",
     headers: {
-      "X-Shopify-Access-Token": options.accessToken,
       "Content-Type": "application/json",
+      "X-Shopify-Access-Token": options.accessToken,
     },
+    body: JSON.stringify({ query, variables: { ids } }),
   });
+
   if (!response.ok) {
-    return null;
+    const text = await response.text();
+    throw new Error(`Shopify GraphQL ${response.status}: ${text.slice(0, 400)}`);
   }
-  const data = (await response.json()) as ProductJson;
-  return parseProductSummary(data);
+
+  const body = (await response.json()) as GraphQLNodesResponse;
+  if (body.errors) {
+    throw new Error(`Shopify GraphQL errors: ${JSON.stringify(body.errors).slice(0, 400)}`);
+  }
+
+  const map = new Map<number, { title: string; sku: string | null }>();
+  const nodes = body.data?.nodes ?? [];
+
+  for (const node of nodes) {
+    if (!node || typeof node !== "object") continue;
+    const n = node as Record<string, unknown>;
+    const gid = typeof n.id === "string" ? n.id : "";
+    const m = /Product\/(\d+)/.exec(gid);
+    const pid = m ? Number(m[1]) : NaN;
+    if (!Number.isFinite(pid)) continue;
+
+    const title = typeof n.title === "string" ? n.title : "";
+    let sku: string | null = null;
+    const variants = n.variants as Record<string, unknown> | undefined;
+    const edges = variants?.edges as unknown[] | undefined;
+    const firstEdge = edges?.[0] as Record<string, unknown> | undefined;
+    const vnode = firstEdge?.node as Record<string, unknown> | undefined;
+    if (vnode?.sku != null && String(vnode.sku).trim() !== "") {
+      sku = String(vnode.sku);
+    }
+
+    map.set(pid, { title: title.trim() ? title : "—", sku });
+  }
+
+  return map;
 }
 
 export type SyncedLinkInput = {
@@ -63,11 +102,11 @@ export type SyncedLinkInput = {
 
 export type EnrichedSyncedItem = SyncedLinkInput & {
   title?: string;
-  imageUrl?: string | null;
+  sku?: string | null;
 };
 
 /**
- * Enriquece cada vínculo con título e imagen (peticiones en pequeños lotes para respetar límites).
+ * Enriquece vínculos con título y SKU (Admin GraphQL por lotes; sin imágenes).
  */
 export async function enrichSyncedProductItems(
   items: SyncedLinkInput[],
@@ -75,44 +114,46 @@ export async function enrichSyncedProductItems(
     shopDomain: string;
     accessToken: string;
     apiVersion?: string;
-    concurrency?: number;
+    /** Pausa entre lotes GraphQL (ms). */
     delayBetweenBatchesMs?: number;
   },
 ): Promise<EnrichedSyncedItem[]> {
   if (items.length === 0) return [];
 
-  const concurrency = Math.max(1, Math.min(options.concurrency ?? 4, 8));
-  const delayMs = options.delayBetweenBatchesMs ?? 80;
   const apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
+  const delayMs = options.delayBetweenBatchesMs ?? 100;
   const { shopDomain, accessToken } = options;
 
-  const out: EnrichedSyncedItem[] = [];
+  const merged = new Map<number, EnrichedSyncedItem>();
+  for (const it of items) {
+    merged.set(it.shopifyProductId, { ...it });
+  }
 
-  for (let i = 0; i < items.length; i += concurrency) {
-    const batch = items.slice(i, i + concurrency);
-    const chunk = await Promise.all(
-      batch.map(async (item) => {
-        const summary = await fetchShopifyProductSummary({
-          shopDomain,
-          accessToken,
-          apiVersion,
-          productId: item.shopifyProductId,
+  for (let i = 0; i < items.length; i += GRAPHQL_NODES_BATCH) {
+    const slice = items.slice(i, i + GRAPHQL_NODES_BATCH);
+    const ids = slice.map((s) => s.shopifyProductId);
+    const batchMap = await fetchProductTitleAndSkuBatch({
+      shopDomain,
+      accessToken,
+      apiVersion,
+      productIds: ids,
+    });
+    for (const id of ids) {
+      const row = merged.get(id);
+      const info = batchMap.get(id);
+      if (!row) continue;
+      if (info) {
+        merged.set(id, {
+          ...row,
+          title: info.title,
+          sku: info.sku,
         });
-        if (!summary) {
-          return { ...item };
-        }
-        return {
-          ...item,
-          title: summary.title,
-          imageUrl: summary.imageUrl,
-        };
-      }),
-    );
-    out.push(...chunk);
-    if (i + concurrency < items.length) {
+      }
+    }
+    if (i + GRAPHQL_NODES_BATCH < items.length) {
       await sleep(delayMs);
     }
   }
 
-  return out;
+  return items.map((it) => merged.get(it.shopifyProductId)!);
 }

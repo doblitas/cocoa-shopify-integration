@@ -8,6 +8,7 @@ import { listSyncedProductLinks } from "@/lib/productLinks/store";
 import { getTenantByShopDomain, getTenantByTenantId } from "@/lib/tenants";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function getBearerToken(request: Request): string | null {
   const auth = request.headers.get("authorization") ?? "";
@@ -49,7 +50,7 @@ export async function GET(request: Request) {
         totalKeys,
         enrichment: "skipped" as const,
         enrichmentNote:
-          "adminAccessToken (shpat_...) is required in SHOPIFY_TENANTS_JSON to load titles and images, or use the embedded app session.",
+          "adminAccessToken (shpat_...) is required in SHOPIFY_TENANTS_JSON to load titles/SKU, or use the embedded app session.",
       });
     }
     try {
