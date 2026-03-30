@@ -4,6 +4,7 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import {
   AppProvider,
   BlockStack,
+  Button,
   Card,
   InlineStack,
   Page,
@@ -56,6 +57,20 @@ type CoverageOk = {
   moreLinksThanProducts?: boolean;
 };
 
+type ReconciliationOk = {
+  ok: true;
+  tenantId: string;
+  shopDomain: string;
+  shopifyCountFromApi: number;
+  shopifyIdsFetched: number;
+  countMatchesFetched: boolean;
+  redisLinkedCount: number;
+  inShopifyNotInRedisCount: number;
+  orphanLinksInRedisCount: number;
+  sampleShopifyNotLinked: number[];
+  sampleOrphanShopifyIds: number[];
+};
+
 type SyncOk = {
   ok: true;
   tenantId: string;
@@ -103,6 +118,9 @@ export function DashboardBridge() {
     moreLinksThanProducts?: boolean;
   } | null>(null);
   const [coverageError, setCoverageError] = useState<string | null>(null);
+  const [reconciliation, setReconciliation] = useState<ReconciliationOk | null>(null);
+  const [reconciliationLoading, setReconciliationLoading] = useState(false);
+  const [reconciliationError, setReconciliationError] = useState<string | null>(null);
 
   const load = useCallback(
     async (mode: "initial" | "refresh") => {
@@ -182,6 +200,33 @@ export function DashboardBridge() {
     },
     [shopify],
   );
+
+  const handleReconcile = useCallback(async () => {
+    setReconciliationError(null);
+    setReconciliation(null);
+    setReconciliationLoading(true);
+    try {
+      const token = await shopify.idToken();
+      const res = await fetch("/api/dashboard/sync-reconciliation", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const parsed = (await res.json()) as ReconciliationOk | ApiErr;
+      if (!res.ok || !("ok" in parsed) || !parsed.ok) {
+        setReconciliationError(
+          "error" in parsed && typeof parsed.error === "string"
+            ? parsed.error
+            : "No se pudo reconciliar (Shopify vs enlaces)",
+        );
+        return;
+      }
+      setReconciliation(parsed);
+      void load("refresh");
+    } catch (e) {
+      setReconciliationError(e instanceof Error ? e.message : "Error desconocido");
+    } finally {
+      setReconciliationLoading(false);
+    }
+  }, [shopify, load]);
 
   useEffect(() => {
     void load("initial");
@@ -343,6 +388,84 @@ export function DashboardBridge() {
                     ) : null}
                   </BlockStack>
                 )}
+              </BlockStack>
+            </Card>
+          ) : null}
+
+          {!loading && !error && data ? (
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Reconciliación Shopify ↔ enlaces de la app
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  El conteo en el panel de Cocoa (p. ej. «Mi tienda») puede ser distinto: puede incluir
+                  artículos creados manualmente, duplicados o históricos que no pasaron por Shopify. Esta
+                  herramienta solo compara el catálogo de Shopify Admin con los vínculos guardados aquí
+                  (Shopify → clave Cocoa).
+                </Text>
+                <Button
+                  onClick={() => void handleReconcile()}
+                  loading={reconciliationLoading}
+                  disabled={loading || refreshing || syncing}
+                >
+                  Reconciliar ahora
+                </Button>
+                {reconciliationError ? (
+                  <Text as="p" variant="bodySm" tone="critical">
+                    {reconciliationError}
+                  </Text>
+                ) : null}
+                {reconciliation ? (
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm">
+                      Shopify (count.json): <strong>{reconciliation.shopifyCountFromApi}</strong> · IDs
+                      listados: <strong>{reconciliation.shopifyIdsFetched}</strong>
+                      {!reconciliation.countMatchesFetched ? (
+                        <span>
+                          {" "}
+                          (difiere del count: revisa o repite en unos minutos)
+                        </span>
+                      ) : null}
+                    </Text>
+                    <Text as="p" variant="bodySm">
+                      Enlaces en esta app: <strong>{reconciliation.redisLinkedCount}</strong>
+                    </Text>
+                    <Text as="p" variant="bodySm">
+                      En Shopify sin enlace guardado: <strong>{reconciliation.inShopifyNotInRedisCount}</strong>{" "}
+                      (pendientes de sync o no elegibles según reglas: inventario, publicado, etc.)
+                    </Text>
+                    <Text as="p" variant="bodySm">
+                      Enlaces huérfanos (ID en Redis que ya no existe en Shopify):{" "}
+                      <strong>{reconciliation.orphanLinksInRedisCount}</strong> — suelen limpiarse al
+                      sincronizar o al borrar el producto en Shopify.
+                    </Text>
+                    {reconciliation.sampleShopifyNotLinked.length > 0 ? (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Muestra IDs Shopify sin enlace:{" "}
+                        <code>{reconciliation.sampleShopifyNotLinked.join(", ")}</code>
+                        {reconciliation.inShopifyNotInRedisCount > reconciliation.sampleShopifyNotLinked.length
+                          ? " …"
+                          : null}
+                      </Text>
+                    ) : null}
+                    {reconciliation.sampleOrphanShopifyIds.length > 0 ? (
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        Muestra IDs huérfanos:{" "}
+                        <code>{reconciliation.sampleOrphanShopifyIds.join(", ")}</code>
+                        {reconciliation.orphanLinksInRedisCount > reconciliation.sampleOrphanShopifyIds.length
+                          ? " …"
+                          : null}
+                      </Text>
+                    ) : null}
+                    {reconciliation.inShopifyNotInRedisCount === 0 &&
+                    reconciliation.orphanLinksInRedisCount === 0 ? (
+                      <Text as="p" variant="bodySm" tone="success">
+                        Coincidencia: todos los productos de Shopify tienen enlace y no hay huérfanos en Redis.
+                      </Text>
+                    ) : null}
+                  </BlockStack>
+                ) : null}
               </BlockStack>
             </Card>
           ) : null}

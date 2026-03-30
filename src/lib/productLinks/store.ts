@@ -90,6 +90,37 @@ export async function listSyncedProductLinks(tenantId: string): Promise<ListSync
   return { items, truncated, totalKeys };
 }
 
+/**
+ * Todos los `shopifyProductId` con vínculo en Redis (scan completo; solo IDs, sin límite de listado del dashboard).
+ */
+export async function listAllLinkedShopifyProductIds(tenantId: string): Promise<number[]> {
+  const pattern = `tenant:${tenantId}:shopify-product:*:cocoa-key`;
+  const ids: number[] = [];
+
+  if (redis) {
+    let cursor = "0";
+    do {
+      const [nextCursor, found] = await redis.scan(cursor, { match: pattern, count: 200 });
+      cursor = nextCursor;
+      for (const key of found) {
+        const id = parseProductIdFromRedisKey(tenantId, key);
+        if (id != null) ids.push(id);
+      }
+    } while (cursor !== "0");
+  } else {
+    const prefix = `tenant:${tenantId}:shopify-product:`;
+    const suffix = `:cocoa-key`;
+    for (const key of memoryStore.keys()) {
+      if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+      const id = parseProductIdFromRedisKey(tenantId, key);
+      if (id != null) ids.push(id);
+    }
+  }
+
+  ids.sort((a, b) => a - b);
+  return ids;
+}
+
 export async function getCocoaProductKey(
   tenantId: string,
   shopifyProductId: number,

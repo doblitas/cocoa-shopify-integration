@@ -41,6 +41,58 @@ export async function fetchShopifyProductCount(options: {
 }
 
 /**
+ * Lista todos los IDs de producto (solo `fields=id`) para reconciliación con Redis.
+ */
+export async function fetchAllShopifyProductIds(options: {
+  shopDomain: string;
+  accessToken: string;
+  apiVersion?: string;
+  maxProducts?: number;
+  delayMsBetweenPages?: number;
+}): Promise<number[]> {
+  const apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
+  const maxProducts = options.maxProducts ?? 50_000;
+  const delayMs = options.delayMsBetweenPages ?? 150;
+
+  const shop = options.shopDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  let nextUrl: string | null =
+    `https://${shop}/admin/api/${apiVersion}/products.json?limit=250&fields=id`;
+
+  const ids: number[] = [];
+
+  while (nextUrl && ids.length < maxProducts) {
+    const response = await fetch(nextUrl, {
+      headers: {
+        "X-Shopify-Access-Token": options.accessToken,
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`Shopify products API ${response.status}: ${text}`);
+    }
+
+    const data = (await response.json()) as ProductsResponse;
+    const products = data.products ?? [];
+    for (const raw of products) {
+      if (ids.length >= maxProducts) break;
+      if (!raw || typeof raw !== "object") continue;
+      const o = raw as Record<string, unknown>;
+      const id = typeof o.id === "number" ? o.id : Number(o.id);
+      if (Number.isFinite(id)) ids.push(id);
+    }
+
+    nextUrl = parseNextPageUrlFromLinkHeader(response.headers.get("link"));
+    if (nextUrl) {
+      await sleep(delayMs);
+    }
+  }
+
+  return ids;
+}
+
+/**
  * Una sola petición GET a la URL de productos (página de Shopify).
  */
 export async function fetchProductsPageRaw(options: {
