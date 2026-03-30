@@ -15,7 +15,7 @@ export type SyncStatusSnapshot = {
   source: "webhook" | "bulk_sync";
   ok: boolean;
   shopifyProductId?: number;
-  action?: "create" | "update";
+  action?: "create" | "update" | "remove" | "skip";
   error?: string;
   bulk?: {
     fetched: number;

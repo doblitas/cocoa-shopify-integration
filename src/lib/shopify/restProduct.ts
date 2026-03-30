@@ -62,12 +62,18 @@ export function restProductToWebhookPayload(raw: unknown): ShopifyProductWebhook
   const imageObj = p.image && typeof p.image === "object" ? normalizeImage(p.image) : null;
   const image = imageObj ?? images[0] ?? null;
 
+  const status = p.status == null ? null : typeof p.status === "string" ? p.status : String(p.status);
+  const publishedAt =
+    p.published_at == null ? null : typeof p.published_at === "string" ? p.published_at : String(p.published_at);
+
   return {
     id,
     title: String(p.title ?? ""),
     body_html: p.body_html != null ? String(p.body_html) : null,
     product_type: p.product_type != null ? String(p.product_type) : null,
     tags: p.tags != null ? String(p.tags) : null,
+    status,
+    published_at: publishedAt,
     variants,
     image,
     images: images.length > 0 ? images : undefined,

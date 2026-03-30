@@ -4,12 +4,14 @@ import { useAppBridge } from "@shopify/app-bridge-react";
 import {
   AppProvider,
   BlockStack,
+  Box,
   Card,
   InlineStack,
   Page,
   Spinner,
   Text,
   Badge,
+  Thumbnail,
 } from "@shopify/polaris";
 import en from "@shopify/polaris/locales/en.json";
 import { useCallback, useEffect, useState } from "react";
@@ -23,7 +25,7 @@ type ApiOk = {
     source: "webhook" | "bulk_sync";
     ok: boolean;
     shopifyProductId?: number;
-    action?: "create" | "update";
+    action?: "create" | "update" | "remove" | "skip";
     error?: string;
     bulk?: {
       fetched: number;
@@ -38,7 +40,12 @@ type ApiErr = { ok: false; error: string };
 
 type SyncedProductsOk = {
   ok: true;
-  items: { shopifyProductId: number; cocoaKey: string }[];
+  items: {
+    shopifyProductId: number;
+    cocoaKey: string;
+    title?: string;
+    imageUrl?: string | null;
+  }[];
   truncated?: boolean;
   totalKeys?: number;
 };
@@ -86,7 +93,9 @@ export function DashboardBridge() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
-  const [syncedRows, setSyncedRows] = useState<{ shopifyProductId: number; cocoaKey: string }[]>([]);
+  const [syncedRows, setSyncedRows] = useState<
+    { shopifyProductId: number; cocoaKey: string; title?: string; imageUrl?: string | null }[]
+  >([]);
   const [syncedMeta, setSyncedMeta] = useState<{ truncated: boolean; totalKeys: number } | null>(null);
   const [syncedError, setSyncedError] = useState<string | null>(null);
   const [coverage, setCoverage] = useState<{
@@ -391,29 +400,54 @@ export function DashboardBridge() {
                         </span>
                       ) : null}
                     </Text>
-                    <div style={{ maxHeight: 360, overflowY: "auto" }}>
-                      <BlockStack gap="150">
+                    <div style={{ maxHeight: 420, overflowY: "auto" }}>
+                      <BlockStack gap="200">
                         {syncedRows.map((row) => (
-                          <InlineStack key={row.shopifyProductId} gap="300" blockAlign="center" wrap={false}>
-                            <Text as="span" variant="bodySm">
-                              Shopify{" "}
-                              <strong>#{row.shopifyProductId}</strong>
-                              {data.shopDomain ? (
-                                <>
-                                  {" "}
-                                  <a
-                                    href={`https://${data.shopDomain}/admin/products/${row.shopifyProductId}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    Abrir
-                                  </a>
-                                </>
-                              ) : null}
-                            </Text>
-                            <Text as="span" variant="bodySm" tone="subdued">
-                              Cocoa: <code>{row.cocoaKey}</code>
-                            </Text>
+                          <InlineStack
+                            key={row.shopifyProductId}
+                            gap="300"
+                            blockAlign="center"
+                            wrap={false}
+                          >
+                            {row.imageUrl ? (
+                              <Thumbnail
+                                source={row.imageUrl}
+                                alt={row.title?.trim() || `Producto ${row.shopifyProductId}`}
+                                size="small"
+                              />
+                            ) : (
+                              <Box
+                                width="40px"
+                                minHeight="40px"
+                                background="bg-fill-secondary"
+                                borderRadius="200"
+                              />
+                            )}
+                            <BlockStack gap="100">
+                              <Text as="p" variant="bodyMd" fontWeight="semibold">
+                                {row.title?.trim() ? row.title : `Producto #${row.shopifyProductId}`}
+                              </Text>
+                              <InlineStack gap="200" blockAlign="center" wrap>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  Shopify <strong>#{row.shopifyProductId}</strong>
+                                  {data.shopDomain ? (
+                                    <>
+                                      {" "}
+                                      <a
+                                        href={`https://${data.shopDomain}/admin/products/${row.shopifyProductId}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        Abrir en admin
+                                      </a>
+                                    </>
+                                  ) : null}
+                                </Text>
+                                <Text as="span" variant="bodySm" tone="subdued">
+                                  Cocoa: <code>{row.cocoaKey}</code>
+                                </Text>
+                              </InlineStack>
+                            </BlockStack>
                           </InlineStack>
                         ))}
                       </BlockStack>

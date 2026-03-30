@@ -1,10 +1,18 @@
-import { createProductInCocoa, updateProductInCocoa } from "@/lib/cocoa/client";
-import { getCocoaProductKey, saveCocoaProductKey } from "@/lib/productLinks/store";
+import {
+  createProductInCocoa,
+  markProductDeletedInCocoa,
+  updateProductInCocoa,
+} from "@/lib/cocoa/client";
+import { getCocoaProductKey, removeCocoaProductKey, saveCocoaProductKey } from "@/lib/productLinks/store";
 import { saveSyncStatus } from "@/lib/syncStatus/store";
 import type { TenantConfig } from "@/lib/tenants";
 
 import { fetchProductsPageRaw } from "./fetchAdminProducts";
-import { mapShopifyProductToCocoaDraft } from "./mapProduct";
+import {
+  getMinimalCocoaDeleteFields,
+  mapShopifyProductToCocoaDraft,
+} from "./mapProduct";
+import { productShouldSyncToCocoa } from "./productSyncEligibility";
 import { restProductToWebhookPayload } from "./restProduct";
 import type { ShopifyProductWebhookPayload } from "./types";
 import {
@@ -30,6 +38,10 @@ export type BulkSyncApiResponse = {
   nextCursor: string | null;
   /** Solo cuando el servidor corta por tiempo global (catálogo muy grande). */
   warning?: string;
+  /** Sin stock y sin vínculo previo: no se creó en Cocoa. */
+  skippedNoInventory?: number;
+  /** Sin stock pero había vínculo: marcado deleted en Cocoa y borrado vínculo. */
+  removedFromCocoa?: number;
 };
 
 const DEFAULT_BATCH_SIZE = 12;
@@ -135,6 +147,8 @@ export async function runBulkProductSync(
       errorsTruncated: false,
       hasMore: false,
       nextCursor: null,
+      skippedNoInventory: 0,
+      removedFromCocoa: 0,
     };
   }
 
@@ -146,6 +160,8 @@ export async function runBulkProductSync(
   let created = 0;
   let updated = 0;
   let failed = 0;
+  let skippedNoInventory = 0;
+  let removedFromCocoa = 0;
 
   /** First index in `slice` not yet processed (set when we hit the time budget). */
   let budgetStopIndexInSlice: number | null = null;
@@ -158,18 +174,30 @@ export async function runBulkProductSync(
 
     const payload = slice[i]!;
     try {
-      const draft = mapShopifyProductToCocoaDraft(payload, tenant);
-      const existing = await getCocoaProductKey(tenant.tenantId, payload.id);
-
-      if (existing) {
-        await updateProductInCocoa(tenant.cocoa, tenant.tenantId, existing, draft);
-        updated += 1;
-      } else {
-        const cocoaKey = await createProductInCocoa(tenant.cocoa, tenant.tenantId, draft);
-        if (cocoaKey) {
-          await saveCocoaProductKey(tenant.tenantId, payload.id, cocoaKey);
+      if (!productShouldSyncToCocoa(payload)) {
+        const existing = await getCocoaProductKey(tenant.tenantId, payload.id);
+        if (existing) {
+          const minimal = getMinimalCocoaDeleteFields(payload, tenant);
+          await markProductDeletedInCocoa(tenant.cocoa, tenant.tenantId, existing, minimal);
+          await removeCocoaProductKey(tenant.tenantId, payload.id);
+          removedFromCocoa += 1;
+        } else {
+          skippedNoInventory += 1;
         }
-        created += 1;
+      } else {
+        const draft = mapShopifyProductToCocoaDraft(payload, tenant);
+        const existing = await getCocoaProductKey(tenant.tenantId, payload.id);
+
+        if (existing) {
+          await updateProductInCocoa(tenant.cocoa, tenant.tenantId, existing, draft);
+          updated += 1;
+        } else {
+          const cocoaKey = await createProductInCocoa(tenant.cocoa, tenant.tenantId, draft);
+          if (cocoaKey) {
+            await saveCocoaProductKey(tenant.tenantId, payload.id, cocoaKey);
+          }
+          created += 1;
+        }
       }
     } catch (error) {
       failed += 1;
@@ -214,6 +242,8 @@ export async function runBulkProductSync(
       errorsTruncated: errors.length > 50,
       hasMore: true,
       nextCursor: encodeBulkSyncCursor(nextCur),
+      skippedNoInventory,
+      removedFromCocoa,
     };
   }
 
@@ -259,6 +289,8 @@ export async function runBulkProductSync(
     errorsTruncated: errors.length > 50,
     hasMore,
     nextCursor,
+    skippedNoInventory,
+    removedFromCocoa,
   };
 }
 
@@ -279,6 +311,8 @@ export async function runBulkProductSyncUntilDone(
   let totalUpdated = 0;
   let totalFailed = 0;
   let totalFetched = 0;
+  let totalSkippedNoInventory = 0;
+  let totalRemovedFromCocoa = 0;
   const allErrors: { shopifyProductId: number; message: string }[] = [];
 
   for (let iter = 0; iter < MAX_SERVER_SYNC_ITERATIONS; iter += 1) {
@@ -311,6 +345,8 @@ export async function runBulkProductSyncUntilDone(
         nextCursor: cursor,
         warning:
           "Tiempo máximo alcanzado; pulsa de nuevo «Sincronizar todo» para continuar desde donde quedó.",
+        skippedNoInventory: totalSkippedNoInventory,
+        removedFromCocoa: totalRemovedFromCocoa,
       };
     }
 
@@ -325,6 +361,8 @@ export async function runBulkProductSyncUntilDone(
     totalUpdated += result.updated;
     totalFailed += result.failed;
     totalFetched += result.fetched;
+    totalSkippedNoInventory += result.skippedNoInventory ?? 0;
+    totalRemovedFromCocoa += result.removedFromCocoa ?? 0;
     for (const e of result.errors) {
       if (allErrors.length < 100) allErrors.push(e);
     }
@@ -354,6 +392,8 @@ export async function runBulkProductSyncUntilDone(
         errorsTruncated: allErrors.length > 50,
         hasMore: false,
         nextCursor: null,
+        skippedNoInventory: totalSkippedNoInventory,
+        removedFromCocoa: totalRemovedFromCocoa,
       };
     }
 
@@ -385,6 +425,8 @@ export async function runBulkProductSyncUntilDone(
         hasMore: false,
         nextCursor: null,
         warning: "Cursor sin avance; revisa logs o contacta soporte.",
+        skippedNoInventory: totalSkippedNoInventory,
+        removedFromCocoa: totalRemovedFromCocoa,
       };
     }
 
@@ -416,6 +458,8 @@ export async function runBulkProductSyncUntilDone(
     hasMore: true,
     nextCursor: cursor,
     warning: "Límite interno de iteraciones; vuelve a intentar o reduce el catálogo.",
+    skippedNoInventory: totalSkippedNoInventory,
+    removedFromCocoa: totalRemovedFromCocoa,
   };
 }
 
@@ -436,6 +480,8 @@ function emptyBatchResponse(
     errorsTruncated: false,
     hasMore,
     nextCursor,
+    skippedNoInventory: 0,
+    removedFromCocoa: 0,
   };
 }
 

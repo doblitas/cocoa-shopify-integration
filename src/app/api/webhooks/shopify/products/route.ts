@@ -1,8 +1,16 @@
 import { NextResponse } from "next/server";
 
-import { createProductInCocoa, updateProductInCocoa } from "@/lib/cocoa/client";
-import { getCocoaProductKey, saveCocoaProductKey } from "@/lib/productLinks/store";
-import { mapShopifyProductToCocoaDraft } from "@/lib/shopify/mapProduct";
+import {
+  createProductInCocoa,
+  markProductDeletedInCocoa,
+  updateProductInCocoa,
+} from "@/lib/cocoa/client";
+import { getCocoaProductKey, removeCocoaProductKey, saveCocoaProductKey } from "@/lib/productLinks/store";
+import {
+  getMinimalCocoaDeleteFields,
+  mapShopifyProductToCocoaDraft,
+} from "@/lib/shopify/mapProduct";
+import { productShouldSyncToCocoa } from "@/lib/shopify/productSyncEligibility";
 import type { ShopifyProductWebhookPayload } from "@/lib/shopify/types";
 import { verifyShopifyWebhookSignature } from "@/lib/shopify/verifyWebhook";
 import { getTenantByShopDomain } from "@/lib/tenants";
@@ -64,8 +72,45 @@ export async function POST(request: Request) {
   }
 
   try {
-    const draft = mapShopifyProductToCocoaDraft(payload, tenant);
     const existingCocoaKey = await getCocoaProductKey(tenant.tenantId, payload.id);
+
+    if (!productShouldSyncToCocoa(payload)) {
+      if (existingCocoaKey) {
+        const minimal = getMinimalCocoaDeleteFields(payload, tenant);
+        await markProductDeletedInCocoa(tenant.cocoa, tenant.tenantId, existingCocoaKey, minimal);
+        await removeCocoaProductKey(tenant.tenantId, payload.id);
+        await saveSyncStatus(tenant.tenantId, {
+          updatedAt: new Date().toISOString(),
+          source: "webhook",
+          ok: true,
+          shopifyProductId: payload.id,
+          action: "remove",
+        });
+        return NextResponse.json({
+          ok: true,
+          action: "removed_from_cocoa_ineligible",
+          tenantId: tenant.tenantId,
+          shopDomain: tenant.shopDomain,
+          shopifyProductId: payload.id,
+        });
+      }
+      await saveSyncStatus(tenant.tenantId, {
+        updatedAt: new Date().toISOString(),
+        source: "webhook",
+        ok: true,
+        shopifyProductId: payload.id,
+        action: "skip",
+      });
+      return NextResponse.json({
+        ok: true,
+        action: "skipped_ineligible",
+        tenantId: tenant.tenantId,
+        shopDomain: tenant.shopDomain,
+        shopifyProductId: payload.id,
+      });
+    }
+
+    const draft = mapShopifyProductToCocoaDraft(payload, tenant);
 
     if (existingCocoaKey) {
       await updateProductInCocoa(tenant.cocoa, tenant.tenantId, existingCocoaKey, draft);

@@ -47,6 +47,31 @@ function getCategoryKey(payload: ShopifyProductWebhookPayload, tenant: TenantCon
   );
 }
 
+/**
+ * Campos mínimos para marcar un producto como eliminado en Cocoa (sin mapeo por tags).
+ * Requiere `defaultCategoryKey` en el tenant.
+ */
+export function getMinimalCocoaDeleteFields(
+  payload: ShopifyProductWebhookPayload,
+  tenant: TenantConfig,
+): { nombre: string; sku: string; key_categoria: string } {
+  const firstVariant = payload.variants[0];
+  if (!firstVariant) {
+    throw new Error(`Product ${payload.id} does not contain variants`);
+  }
+  const key = tenant.defaultCategoryKey?.trim();
+  if (!key) {
+    throw new Error(
+      `defaultCategoryKey is required in tenant ${tenant.tenantId} to remove products from Cocoa when inventory is zero.`,
+    );
+  }
+  return {
+    nombre: payload.title,
+    sku: firstVariant.sku || String(payload.id),
+    key_categoria: key,
+  };
+}
+
 export function mapShopifyProductToCocoaDraft(
   payload: ShopifyProductWebhookPayload,
   tenant: TenantConfig,

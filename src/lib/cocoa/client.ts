@@ -199,3 +199,30 @@ export async function updateProductInCocoa(
   const datosObj = buildUpdateDatosObject(draft, cocoaKey);
   await sendProductRequest(credentials, tenantId, "/producto/rolComercio/update", datosObj);
 }
+
+/**
+ * Marca el producto como eliminado en Cocoa cuando no hay stock en Shopify (doc 3.3: deleted, activo).
+ */
+export async function markProductDeletedInCocoa(
+  credentials: CocoaCredentials,
+  tenantId: string,
+  cocoaKey: string,
+  fields: { nombre: string; sku: string; key_categoria: string },
+): Promise<void> {
+  const datosObj: Record<string, unknown> = {
+    key: cocoaKey,
+    deleted: true,
+    activo: false,
+    have_stock: false,
+    stock: 0,
+    nombre: fields.nombre,
+    sku: fields.sku,
+    descripcion: "",
+    precio: 0,
+    key_categoria: fields.key_categoria,
+    have_oferta: false,
+    precio_oferta: 0,
+    porcentaje_oferta: 0,
+  };
+  await sendProductRequest(credentials, tenantId, "/producto/rolComercio/update", datosObj);
+}

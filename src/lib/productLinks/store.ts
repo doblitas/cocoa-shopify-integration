@@ -113,3 +113,12 @@ export async function saveCocoaProductKey(
   }
   memoryStore.set(key, cocoaProductKey);
 }
+
+export async function removeCocoaProductKey(tenantId: string, shopifyProductId: number): Promise<void> {
+  const key = buildKey(tenantId, shopifyProductId);
+  if (redis) {
+    await redis.del(key);
+    return;
+  }
+  memoryStore.delete(key);
+}

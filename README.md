@@ -23,6 +23,7 @@ Referencias:
 - Webhook idempotency via `x-shopify-webhook-id` (Redis or in-memory; avoids duplicate Cocoa calls on retries)
 - **Initial sync** of existing catalog: `POST /api/sync/products` (Shopify Admin API + same Cocoa mapping as webhooks). Auth: **`SYNC_SECRET`** + `?tenantId=...`, or **Shopify session JWT** (embedded admin).
 - **Embedded dashboard** (`/dashboard`): muestra el último estado de sync (Redis) y botones **Actualizar estado** y **Sincronizar todo** usando el JWT del admin (no expone `SYNC_SECRET` al navegador).
+- **Inventario y publicación:** solo se **crea o mantiene** en Cocoa si (1) la **suma de `inventory_quantity` de todas las variantes** es **> 0**, y (2) el producto está **publicado en canal de ventas** según Shopify: `status === active` y **`published_at`** no vacío; **`draft`** y **`archived`** no se sincronizan. Si deja de cumplirse (sin stock, borrador, despublicado, etc.), **no** se crea en Cocoa o, si ya había vínculo, se marca **eliminado en Cocoa** y se borra el vínculo en Redis. Para esa baja hace falta **`defaultCategoryKey`** en el tenant (además del mapeo habitual para altas).
 
 ## Initial sync (productos ya existentes en Shopify)
 
