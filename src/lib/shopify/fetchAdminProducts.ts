@@ -11,6 +11,35 @@ type ProductsResponse = {
   products?: unknown[];
 };
 
+type ProductsCountResponse = {
+  count?: number;
+};
+
+/**
+ * Conteo total de productos (REST Admin). Misma versión que el sync.
+ */
+export async function fetchShopifyProductCount(options: {
+  shopDomain: string;
+  accessToken: string;
+  apiVersion?: string;
+}): Promise<number> {
+  const shop = options.shopDomain.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  const apiVersion = options.apiVersion ?? DEFAULT_API_VERSION;
+  const url = `https://${shop}/admin/api/${apiVersion}/products/count.json`;
+  const response = await fetch(url, {
+    headers: {
+      "X-Shopify-Access-Token": options.accessToken,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Shopify products count ${response.status}: ${text}`);
+  }
+  const data = (await response.json()) as ProductsCountResponse;
+  return typeof data.count === "number" && data.count >= 0 ? data.count : 0;
+}
+
 /**
  * Una sola petición GET a la URL de productos (página de Shopify).
  */

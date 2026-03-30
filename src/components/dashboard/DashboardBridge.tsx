@@ -43,6 +43,14 @@ type SyncedProductsOk = {
   totalKeys?: number;
 };
 
+type CoverageOk = {
+  ok: true;
+  shopifyProductCount: number;
+  linkedCount: number;
+  notLinkedCount: number;
+  moreLinksThanProducts?: boolean;
+};
+
 type SyncOk = {
   ok: true;
   tenantId: string;
@@ -83,6 +91,13 @@ export function DashboardBridge() {
   const [syncedRows, setSyncedRows] = useState<{ shopifyProductId: number; cocoaKey: string }[]>([]);
   const [syncedMeta, setSyncedMeta] = useState<{ truncated: boolean; totalKeys: number } | null>(null);
   const [syncedError, setSyncedError] = useState<string | null>(null);
+  const [coverage, setCoverage] = useState<{
+    shopifyProductCount: number;
+    linkedCount: number;
+    notLinkedCount: number;
+    moreLinksThanProducts?: boolean;
+  } | null>(null);
+  const [coverageError, setCoverageError] = useState<string | null>(null);
 
   const load = useCallback(
     async (mode: "initial" | "refresh") => {
@@ -93,12 +108,14 @@ export function DashboardBridge() {
       }
       setError(null);
       setSyncedError(null);
+      setCoverageError(null);
       try {
         const token = await shopify.idToken();
         const headers = { Authorization: `Bearer ${token}` };
-        const [resStatus, resSynced] = await Promise.all([
+        const [resStatus, resSynced, resCoverage] = await Promise.all([
           fetch("/api/dashboard/sync-status", { headers }),
           fetch("/api/dashboard/synced-products", { headers }),
+          fetch("/api/dashboard/sync-coverage", { headers }),
         ]);
         const json = (await resStatus.json()) as ApiOk | ApiErr;
         if (!resStatus.ok || !json.ok) {
@@ -106,6 +123,7 @@ export function DashboardBridge() {
           setData(null);
           setSyncedRows([]);
           setSyncedMeta(null);
+          setCoverage(null);
           return;
         }
         setData(json);
@@ -126,11 +144,29 @@ export function DashboardBridge() {
               : "No se pudo cargar el listado de productos enlazados",
           );
         }
+
+        const coverageParsed = (await resCoverage.json()) as CoverageOk | ApiErr;
+        if (resCoverage.ok && "ok" in coverageParsed && coverageParsed.ok) {
+          setCoverage({
+            shopifyProductCount: coverageParsed.shopifyProductCount,
+            linkedCount: coverageParsed.linkedCount,
+            notLinkedCount: coverageParsed.notLinkedCount,
+            moreLinksThanProducts: Boolean(coverageParsed.moreLinksThanProducts),
+          });
+        } else {
+          setCoverage(null);
+          setCoverageError(
+            "error" in coverageParsed && typeof coverageParsed.error === "string"
+              ? coverageParsed.error
+              : "No se pudo calcular la cobertura (Shopify vs enlaces)",
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error desconocido");
         setData(null);
         setSyncedRows([]);
         setSyncedMeta(null);
+        setCoverage(null);
       } finally {
         if (mode === "initial") {
           setLoading(false);
@@ -338,6 +374,25 @@ export function DashboardBridge() {
                   Productos de Shopify que ya tienen clave en Cocoa (tras crear o actualizar correctamente en
                   sync o webhook). No incluye productos que aún no se han sincronizado.
                 </Text>
+                {coverage ? (
+                  <Text as="p" variant="bodySm">
+                    En Shopify: <strong>{coverage.shopifyProductCount}</strong> productos · Con enlace Cocoa:{" "}
+                    <strong>{coverage.linkedCount}</strong> · Sin enlace (pendientes de sync):{" "}
+                    <strong>{coverage.notLinkedCount}</strong>
+                    {coverage.moreLinksThanProducts ? (
+                      <span>
+                        {" "}
+                        · Hay más enlaces guardados que productos visibles (p. ej. productos borrados en
+                        Shopify).
+                      </span>
+                    ) : null}
+                  </Text>
+                ) : null}
+                {coverageError ? (
+                  <Text as="p" variant="bodySm" tone="critical">
+                    Cobertura: {coverageError}
+                  </Text>
+                ) : null}
                 {syncedError ? (
                   <Text as="p" tone="critical">
                     {syncedError}
