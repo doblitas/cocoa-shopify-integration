@@ -61,18 +61,16 @@ type SyncOk = {
   failed: number;
   hasMore?: boolean;
   nextCursor?: string | null;
+  /** Si el servidor cortó por tiempo global (catálogo muy grande). */
+  warning?: string;
 };
-
-const SYNC_BATCH_SIZE = 12;
-const SYNC_MAX_BATCHES = 500;
 
 async function parseJsonFromSyncResponse(res: Response): Promise<unknown> {
   const text = await res.text();
   try {
     return JSON.parse(text) as unknown;
   } catch {
-    const hint =
-      res.status === 504 || res.status === 502 ? " Timeout del servidor (los lotes lo evitan)." : "";
+    const hint = res.status === 504 || res.status === 502 ? " Timeout del servidor." : "";
     throw new Error(`Respuesta no JSON (${res.status})${hint}: ${text.slice(0, 160)}`);
   }
 }
@@ -186,66 +184,44 @@ export function DashboardBridge() {
     setSyncError(null);
     setSyncing(true);
     try {
-      let cursor: string | undefined;
-      let totalCreated = 0;
-      let totalUpdated = 0;
-      let totalFailed = 0;
-      let batchNum = 0;
+      const token = await shopify.idToken();
+      const res = await fetch("/api/sync/products", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const parsed = (await parseJsonFromSyncResponse(res)) as SyncOk | ApiErr;
 
-      for (;;) {
-        if (batchNum >= SYNC_MAX_BATCHES) {
-          const msg = `Límite de ${SYNC_MAX_BATCHES} lotes alcanzado. Reduce el catálogo o sube el tamaño de lote (batch).`;
-          shopify.toast.show(msg, { isError: true, duration: 10000 });
-          setSyncError(msg);
-          return;
-        }
-        // Session JWT expires ~60s; refresh each batch so token exchange on the server succeeds.
-        const token = await shopify.idToken();
-        const params = new URLSearchParams();
-        params.set("batch", String(SYNC_BATCH_SIZE));
-        if (cursor) {
-          params.set("cursor", cursor);
-        }
-        const res = await fetch(`/api/sync/products?${params.toString()}`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const parsed = (await parseJsonFromSyncResponse(res)) as SyncOk | ApiErr;
+      if (!res.ok || !("ok" in parsed) || !parsed.ok) {
+        const msg =
+          "error" in parsed && typeof parsed.error === "string"
+            ? parsed.error
+            : "Error en la sincronización masiva";
+        shopify.toast.show(msg, { isError: true, duration: 8000 });
+        setSyncError(msg);
+        return;
+      }
 
-        if (!res.ok || !("ok" in parsed) || !parsed.ok) {
-          const msg =
-            "error" in parsed && typeof parsed.error === "string"
-              ? parsed.error
-              : "Error en la sincronización masiva";
-          shopify.toast.show(msg, { isError: true, duration: 8000 });
-          setSyncError(msg);
-          return;
-        }
+      const json = parsed as SyncOk;
+      const totalCreated = json.created;
+      const totalUpdated = json.updated;
+      const totalFailed = json.failed;
 
-        const json = parsed as SyncOk;
-        totalCreated += json.created;
-        totalUpdated += json.updated;
-        totalFailed += json.failed;
-        batchNum += 1;
-
-        if (json.hasMore && json.nextCursor) {
-          const failPart = json.failed > 0 ? `, ${json.failed} error(es)` : "";
-          shopify.toast.show(
-            `Lote ${batchNum}: ${json.fetched} procesados · ${json.created} creados · ${json.updated} actualizados${failPart}… (siguiente lote)`,
-            { duration: 4000 },
-          );
-          cursor = json.nextCursor;
-          await new Promise((r) => setTimeout(r, 200));
-          continue;
-        }
-
-        const summary = `Listo (${batchNum} lote(s)): ${totalCreated} creados · ${totalUpdated} actualizados${
+      if (json.hasMore && json.nextCursor) {
+        const base = `Progreso: ${totalCreated} creados · ${totalUpdated} actualizados${
+          totalFailed > 0 ? ` · ${totalFailed} con error` : ""
+        }.`;
+        const summary = json.warning ? `${base} ${json.warning}` : `${base} Vuelve a pulsar «Sincronizar todo» para continuar.`;
+        shopify.toast.show(summary, { duration: 10000 });
+        setSyncError(null);
+      } else {
+        const summary = `Listo: ${totalCreated} creados · ${totalUpdated} actualizados${
           totalFailed > 0 ? ` · ${totalFailed} con error` : ""
         }`;
         shopify.toast.show(summary, { duration: 8000 });
-        await load("refresh");
-        return;
+        setSyncError(null);
       }
+
+      await load("refresh");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Error desconocido";
       shopify.toast.show(msg, { isError: true, duration: 8000 });

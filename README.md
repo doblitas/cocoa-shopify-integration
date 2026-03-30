@@ -32,23 +32,34 @@ Para importar el catálogo **antes** de que disparen webhooks:
    - **Admin embebido** (`/dashboard` → **Sincronizar todo**): usa **token exchange** (JWT → Admin API). Requiere `NEXT_PUBLIC_SHOPIFY_API_KEY` y `SHOPIFY_API_SECRET`. No hace falta `adminAccessToken` en el JSON para este flujo.
    - **curl / CI** con **`SYNC_SECRET`**: `Authorization: Bearer …` y `?tenantId=…`. Aquí sigue haciendo falta **`adminAccessToken`** (`shpat_...`) en el tenant para la Admin API.
 
-2. **Lotes (evita timeout en Vercel)**  
-   Cada `POST` procesa como mucho **`batch`** productos (por defecto **12**, o `SHOPIFY_SYNC_BATCH_SIZE`). Además, el bucle hacia Cocoa se corta al cumplir **`SHOPIFY_SYNC_BUDGET_MS`** (por defecto **240000** ms = 4 min) para responder **antes** del límite duro de 300s de Vercel; el cliente vuelve a llamar con `nextCursor` y sigue donde quedó.  
-   Si aún ves **504**, baja `SHOPIFY_SYNC_BATCH_SIZE` y/o `SHOPIFY_SYNC_BUDGET_MS` en el despliegue.
+2. **Un solo POST (por defecto)**  
+   El servidor encadena lotes internamente hasta terminar el catálogo o hasta **`SHOPIFY_SYNC_OVERALL_MAX_MS`** (por defecto **280000** ms, por debajo del `maxDuration` 300s de Vercel). El dashboard solo hace **una** petición. Si el catálogo no cabe en ese tiempo, la respuesta trae `hasMore: true` y `nextCursor`; vuelve a ejecutar el mismo `POST` para continuar (o sube `SHOPIFY_SYNC_OVERALL_MAX_MS` si tu plan lo permite).  
+   Cada sub-lote usa `SHOPIFY_SYNC_BATCH_SIZE` (por defecto **12**) y **`SHOPIFY_SYNC_BUDGET_MS`** por iteración interna. Si ves **504**, baja `SHOPIFY_SYNC_BATCH_SIZE` y/o los tiempos en el despliegue.
 
-Ejemplo curl (un solo lote):
+3. **Modo paso a paso (opcional, depuración)**  
+   Añade **`step=1`** (o `single=1`) para el comportamiento antiguo: un lote por `POST` y `cursor` para el siguiente.
+
+Ejemplo curl (sync completo en un solo POST, comportamiento por defecto):
 
 ```bash
 curl -sS -X POST \
-  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=12" \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI" \
   -H "Authorization: Bearer TU_SYNC_SECRET"
 ```
 
-Siguiente lote (copia `nextCursor` de la respuesta JSON anterior):
+Un solo lote (modo paso):
 
 ```bash
 curl -sS -X POST \
-  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&batch=12&cursor=PASTE_AQUI" \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&step=1&batch=12" \
+  -H "Authorization: Bearer TU_SYNC_SECRET"
+```
+
+Siguiente lote en modo paso (`nextCursor` de la respuesta anterior):
+
+```bash
+curl -sS -X POST \
+  "https://TU-DOMINIO.vercel.app/api/sync/products?tenantId=JI&step=1&batch=12&cursor=PASTE_AQUI" \
   -H "Authorization: Bearer TU_SYNC_SECRET"
 ```
 

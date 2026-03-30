@@ -18,7 +18,7 @@ export type BulkSyncApiResponse = {
   ok: true;
   tenantId: string;
   shopDomain: string;
-  /** Productos procesados en este lote */
+  /** Productos procesados en este lote (o el total si fue un sync completo en servidor) */
   fetched: number;
   created: number;
   updated: number;
@@ -28,12 +28,16 @@ export type BulkSyncApiResponse = {
   /** Si true, el cliente debe llamar POST de nuevo con nextCursor */
   hasMore: boolean;
   nextCursor: string | null;
+  /** Solo cuando el servidor corta por tiempo global (catálogo muy grande). */
+  warning?: string;
 };
 
 const DEFAULT_BATCH_SIZE = 12;
 const DELAY_MS_PER_PRODUCT = 30;
 /** Stop Cocoa loop before Vercel kills the function (default 300s). */
 const DEFAULT_SYNC_BUDGET_MS = 240_000;
+/** Tiempo máximo para un solo POST que hace todo el bucle en servidor (por debajo de maxDuration). */
+const DEFAULT_OVERALL_SYNC_MAX_MS = 280_000;
 
 function getSyncBudgetMs(): number {
   const raw = process.env.SHOPIFY_SYNC_BUDGET_MS?.trim();
@@ -51,6 +55,22 @@ function getBatchSize(requested?: number): number {
   return Math.min(Math.max(1, Math.floor(n)), 250);
 }
 
+function getOverallSyncMaxMs(): number {
+  const raw = process.env.SHOPIFY_SYNC_OVERALL_MAX_MS?.trim();
+  const n = raw ? Number(raw) : DEFAULT_OVERALL_SYNC_MAX_MS;
+  if (!Number.isFinite(n) || n < 60_000) {
+    return DEFAULT_OVERALL_SYNC_MAX_MS;
+  }
+  return Math.min(Math.floor(n), 295_000);
+}
+
+function getSliceBudgetMs(override?: number): number {
+  if (override != null) {
+    return Math.max(5_000, Math.min(Math.floor(override), 295_000));
+  }
+  return getSyncBudgetMs();
+}
+
 /**
  * Un lote de sincronización: una o varias páginas de Shopify, como máximo `batchSize` productos por petición HTTP.
  *
@@ -63,6 +83,10 @@ export async function runBulkProductSync(
   options: {
     cursor?: string | null;
     batchSize?: number;
+    /** No escribir Redis; el caller agrega varios lotes y guarda al final. */
+    suppressStatusWrites?: boolean;
+    /** Tiempo restante para procesar el slice (p. ej. bucle en servidor). */
+    budgetMsOverride?: number;
   } = {},
 ): Promise<BulkSyncApiResponse> {
   const accessToken = shopifyAccessTokenOverride ?? tenant.adminAccessToken;
@@ -74,6 +98,7 @@ export async function runBulkProductSync(
 
   const apiVersion = process.env.SHOPIFY_ADMIN_API_VERSION ?? "2024-10";
   const batchSize = getBatchSize(options.batchSize);
+  const suppressStatusWrites = Boolean(options.suppressStatusWrites);
 
   const cursor: BulkSyncCursorV1 =
     decodeBulkSyncCursor(options.cursor ?? null) ?? initialBulkSyncCursor(tenant.shopDomain, apiVersion);
@@ -95,7 +120,9 @@ export async function runBulkProductSync(
       const nextCur: BulkSyncCursorV1 = { v: 1, pageUrl: nextPageUrl, skip: 0 };
       return emptyBatchResponse(tenant, true, encodeBulkSyncCursor(nextCur));
     }
-    await saveFinalStatus(tenant.tenantId, 0, 0, 0, 0, true);
+    if (!suppressStatusWrites) {
+      await saveFinalStatus(tenant.tenantId, 0, 0, 0, 0, true);
+    }
     return {
       ok: true,
       tenantId: tenant.tenantId,
@@ -112,7 +139,7 @@ export async function runBulkProductSync(
   }
 
   const slice = payloads.slice(cursor.skip, cursor.skip + batchSize);
-  const budgetMs = getSyncBudgetMs();
+  const budgetMs = getSliceBudgetMs(options.budgetMsOverride);
   const started = Date.now();
 
   const errors: { shopifyProductId: number; message: string }[] = [];
@@ -161,18 +188,20 @@ export async function runBulkProductSync(
 
   if (budgetStopIndexInSlice !== null) {
     const nextCur: BulkSyncCursorV1 = { v: 1, pageUrl: cursor.pageUrl, skip: processedEnd };
-    await saveSyncStatus(tenant.tenantId, {
-      updatedAt: new Date().toISOString(),
-      source: "bulk_sync",
-      ok: true,
-      error: "Sincronización en curso: límite de tiempo por petición; continúa el siguiente lote.",
-      bulk: {
-        fetched: completedInSlice,
-        created,
-        updated,
-        failed,
-      },
-    });
+    if (!suppressStatusWrites) {
+      await saveSyncStatus(tenant.tenantId, {
+        updatedAt: new Date().toISOString(),
+        source: "bulk_sync",
+        ok: true,
+        error: "Sincronización en curso: límite de tiempo por petición; continúa el siguiente lote.",
+        bulk: {
+          fetched: completedInSlice,
+          created,
+          updated,
+          failed,
+        },
+      });
+    }
     return {
       ok: true,
       tenantId: tenant.tenantId,
@@ -199,21 +228,23 @@ export async function runBulkProductSync(
     nextCursor = encodeBulkSyncCursor({ v: 1, pageUrl: nextPageUrl, skip: 0 });
   }
 
-  if (!hasMore) {
-    await saveFinalStatus(tenant.tenantId, slice.length, created, updated, failed, failed === 0);
-  } else {
-    await saveSyncStatus(tenant.tenantId, {
-      updatedAt: new Date().toISOString(),
-      source: "bulk_sync",
-      ok: true,
-      error: "Sincronización en curso: hay más lotes pendientes.",
-      bulk: {
-        fetched: slice.length,
-        created,
-        updated,
-        failed,
-      },
-    });
+  if (!suppressStatusWrites) {
+    if (!hasMore) {
+      await saveFinalStatus(tenant.tenantId, slice.length, created, updated, failed, failed === 0);
+    } else {
+      await saveSyncStatus(tenant.tenantId, {
+        updatedAt: new Date().toISOString(),
+        source: "bulk_sync",
+        ok: true,
+        error: "Sincronización en curso: hay más lotes pendientes.",
+        bulk: {
+          fetched: slice.length,
+          created,
+          updated,
+          failed,
+        },
+      });
+    }
   }
 
   return {
@@ -228,6 +259,163 @@ export async function runBulkProductSync(
     errorsTruncated: errors.length > 50,
     hasMore,
     nextCursor,
+  };
+}
+
+const MAX_SERVER_SYNC_ITERATIONS = 100_000;
+
+/**
+ * Una sola petición HTTP: encadena lotes en el servidor hasta terminar el catálogo o agotar el tiempo global
+ * (Vercel maxDuration). El cliente ya no tiene que llamar en bucle con cursor.
+ */
+export async function runBulkProductSyncUntilDone(
+  tenant: TenantConfig,
+  shopifyAccessTokenOverride: string | undefined,
+  options: { batchSize?: number } = {},
+): Promise<BulkSyncApiResponse> {
+  const deadline = Date.now() + getOverallSyncMaxMs();
+  let cursor: string | null = null;
+  let totalCreated = 0;
+  let totalUpdated = 0;
+  let totalFailed = 0;
+  let totalFetched = 0;
+  const allErrors: { shopifyProductId: number; message: string }[] = [];
+
+  for (let iter = 0; iter < MAX_SERVER_SYNC_ITERATIONS; iter += 1) {
+    const remaining = deadline - Date.now() - 5_000;
+    if (remaining < 5_000) {
+      await saveSyncStatus(tenant.tenantId, {
+        updatedAt: new Date().toISOString(),
+        source: "bulk_sync",
+        ok: totalFailed === 0,
+        error:
+          "Sincronización incompleta: tiempo máximo del servidor. Pulsa «Sincronizar todo» de nuevo para continuar.",
+        bulk: {
+          fetched: totalFetched,
+          created: totalCreated,
+          updated: totalUpdated,
+          failed: totalFailed,
+        },
+      });
+      return {
+        ok: true,
+        tenantId: tenant.tenantId,
+        shopDomain: tenant.shopDomain,
+        fetched: totalFetched,
+        created: totalCreated,
+        updated: totalUpdated,
+        failed: totalFailed,
+        errors: allErrors.slice(0, 50),
+        errorsTruncated: allErrors.length > 50,
+        hasMore: true,
+        nextCursor: cursor,
+        warning:
+          "Tiempo máximo alcanzado; pulsa de nuevo «Sincronizar todo» para continuar desde donde quedó.",
+      };
+    }
+
+    const result = await runBulkProductSync(tenant, shopifyAccessTokenOverride, {
+      cursor,
+      batchSize: options.batchSize,
+      suppressStatusWrites: true,
+      budgetMsOverride: Math.min(getSyncBudgetMs(), remaining),
+    });
+
+    totalCreated += result.created;
+    totalUpdated += result.updated;
+    totalFailed += result.failed;
+    totalFetched += result.fetched;
+    for (const e of result.errors) {
+      if (allErrors.length < 100) allErrors.push(e);
+    }
+
+    if (!result.hasMore) {
+      await saveSyncStatus(tenant.tenantId, {
+        updatedAt: new Date().toISOString(),
+        source: "bulk_sync",
+        ok: totalFailed === 0,
+        error: totalFailed > 0 ? `${totalFailed} product(s) failed` : undefined,
+        bulk: {
+          fetched: totalFetched,
+          created: totalCreated,
+          updated: totalUpdated,
+          failed: totalFailed,
+        },
+      });
+      return {
+        ok: true,
+        tenantId: tenant.tenantId,
+        shopDomain: tenant.shopDomain,
+        fetched: totalFetched,
+        created: totalCreated,
+        updated: totalUpdated,
+        failed: totalFailed,
+        errors: allErrors.slice(0, 50),
+        errorsTruncated: allErrors.length > 50,
+        hasMore: false,
+        nextCursor: null,
+      };
+    }
+
+    /** Evita bucle infinito si el cursor no cambia (fallo de datos / API). */
+    const next = result.nextCursor;
+    if (next === cursor) {
+      await saveSyncStatus(tenant.tenantId, {
+        updatedAt: new Date().toISOString(),
+        source: "bulk_sync",
+        ok: false,
+        error: "El cursor de sync no avanzó; sincronización detenida para evitar un bucle.",
+        bulk: {
+          fetched: totalFetched,
+          created: totalCreated,
+          updated: totalUpdated,
+          failed: totalFailed,
+        },
+      });
+      return {
+        ok: true,
+        tenantId: tenant.tenantId,
+        shopDomain: tenant.shopDomain,
+        fetched: totalFetched,
+        created: totalCreated,
+        updated: totalUpdated,
+        failed: totalFailed,
+        errors: allErrors.slice(0, 50),
+        errorsTruncated: allErrors.length > 50,
+        hasMore: false,
+        nextCursor: null,
+        warning: "Cursor sin avance; revisa logs o contacta soporte.",
+      };
+    }
+
+    cursor = next;
+  }
+
+  await saveSyncStatus(tenant.tenantId, {
+    updatedAt: new Date().toISOString(),
+    source: "bulk_sync",
+    ok: false,
+    error: "Límite interno de iteraciones de sync; contacta soporte.",
+    bulk: {
+      fetched: totalFetched,
+      created: totalCreated,
+      updated: totalUpdated,
+      failed: totalFailed,
+    },
+  });
+  return {
+    ok: true,
+    tenantId: tenant.tenantId,
+    shopDomain: tenant.shopDomain,
+    fetched: totalFetched,
+    created: totalCreated,
+    updated: totalUpdated,
+    failed: totalFailed,
+    errors: allErrors.slice(0, 50),
+    errorsTruncated: allErrors.length > 50,
+    hasMore: true,
+    nextCursor: cursor,
+    warning: "Límite interno de iteraciones; vuelve a intentar o reduce el catálogo.",
   };
 }
 

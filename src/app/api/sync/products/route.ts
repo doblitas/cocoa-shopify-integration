@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 import { destToShopDomain } from "@/lib/shopify/destToShopDomain";
 import { getShopifyApi } from "@/lib/shopify/app";
-import { runBulkProductSync } from "@/lib/shopify/runBulkProductSync";
+import { runBulkProductSync, runBulkProductSyncUntilDone } from "@/lib/shopify/runBulkProductSync";
 import { getTenantByShopDomain, getTenantByTenantId } from "@/lib/tenants";
 
 export const runtime = "nodejs";
@@ -32,6 +32,9 @@ export async function POST(request: Request) {
   const batchParam = url.searchParams.get("batch")?.trim();
   const batchSize =
     batchParam && Number(batchParam) > 0 ? Math.min(Math.floor(Number(batchParam)), 250) : undefined;
+  /** Un solo lote (depuración / compat); por defecto el servidor hace todo el catálogo en una petición. */
+  const stepMode =
+    url.searchParams.get("step") === "1" || url.searchParams.get("single") === "1";
 
   let tenant = null as ReturnType<typeof getTenantByTenantId>;
   /** Set when auth is session JWT: online access token from token exchange (Dev Dashboard / embedded app). */
@@ -103,10 +106,14 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await runBulkProductSync(tenant, sessionExchangeAccessToken, {
-      cursor: cursorParam,
-      batchSize,
-    });
+    const result = stepMode
+      ? await runBulkProductSync(tenant, sessionExchangeAccessToken, {
+          cursor: cursorParam,
+          batchSize,
+        })
+      : await runBulkProductSyncUntilDone(tenant, sessionExchangeAccessToken, {
+          batchSize,
+        });
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
