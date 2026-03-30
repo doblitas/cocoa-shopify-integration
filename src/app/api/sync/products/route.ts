@@ -91,13 +91,16 @@ export async function POST(request: Request) {
       if (!session.accessToken) {
         return NextResponse.json(
           { ok: false, error: "Token exchange returned no access token" },
-          { status: 502 },
+          { status: 503 },
         );
       }
       sessionExchangeAccessToken = session.accessToken;
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Token exchange failed";
-      return NextResponse.json({ ok: false, error: `Session token exchange failed: ${msg}` }, { status: 502 });
+      return NextResponse.json(
+        { ok: false, error: `Session token exchange failed: ${msg}` },
+        { status: 503 },
+      );
     }
   }
 
@@ -117,10 +120,11 @@ export async function POST(request: Request) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("POST /api/sync/products", message);
     const isMissingAccess = message.includes("No Shopify Admin API access token");
     return NextResponse.json(
       { ok: false, error: message },
-      { status: isMissingAccess ? 400 : 502 },
+      { status: isMissingAccess ? 400 : 500 },
     );
   }
 }

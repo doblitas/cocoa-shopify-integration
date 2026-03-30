@@ -34,7 +34,7 @@ Para importar el catálogo **antes** de que disparen webhooks:
    - **curl / CI** con **`SYNC_SECRET`**: `Authorization: Bearer …` y `?tenantId=…`. Aquí sigue haciendo falta **`adminAccessToken`** (`shpat_...`) en el tenant para la Admin API.
 
 2. **Un solo POST (por defecto)**  
-   El servidor encadena lotes internamente hasta terminar el catálogo o hasta **`SHOPIFY_SYNC_OVERALL_MAX_MS`** (por defecto **280000** ms, por debajo del `maxDuration` 300s de Vercel). El dashboard solo hace **una** petición. Si el catálogo no cabe en ese tiempo, la respuesta trae `hasMore: true` y `nextCursor`; vuelve a ejecutar el mismo `POST` para continuar (o sube `SHOPIFY_SYNC_OVERALL_MAX_MS` si tu plan lo permite).  
+   El servidor encadena lotes internamente hasta terminar el catálogo o hasta **`SHOPIFY_SYNC_OVERALL_MAX_MS`**. En **desarrollo local** el default es **280000** ms (margen bajo `maxDuration` 300s). En **Vercel**, si **no** defines `SHOPIFY_SYNC_OVERALL_MAX_MS`, el default es **~9 s** para no superar el límite típico del plan (p. ej. Hobby ~10 s) y evitar **502**; en **Vercel Pro** con `maxDuration` alto, define `SHOPIFY_SYNC_OVERALL_MAX_MS=280000` en el proyecto. Si el catálogo no cabe en el tiempo, la respuesta trae `hasMore: true` y `nextCursor`; vuelve a ejecutar el mismo `POST` para continuar.  
    Cada sub-lote usa `SHOPIFY_SYNC_BATCH_SIZE` (por defecto **12**) y **`SHOPIFY_SYNC_BUDGET_MS`** por iteración interna. Si ves **504**, baja `SHOPIFY_SYNC_BATCH_SIZE` y/o los tiempos en el despliegue.
 
 3. **Modo paso a paso (opcional, depuración)**  

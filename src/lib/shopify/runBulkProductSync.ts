@@ -69,11 +69,18 @@ function getBatchSize(requested?: number): number {
 
 function getOverallSyncMaxMs(): number {
   const raw = process.env.SHOPIFY_SYNC_OVERALL_MAX_MS?.trim();
-  const n = raw ? Number(raw) : DEFAULT_OVERALL_SYNC_MAX_MS;
-  if (!Number.isFinite(n) || n < 60_000) {
-    return DEFAULT_OVERALL_SYNC_MAX_MS;
+  if (raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 5_000) {
+      return process.env.VERCEL ? 9_000 : DEFAULT_OVERALL_SYNC_MAX_MS;
+    }
+    return Math.min(Math.floor(n), 295_000);
   }
-  return Math.min(Math.floor(n), 295_000);
+  /** En Vercel el límite real de ejecución suele ser 10s (Hobby) aunque maxDuration sea mayor; sin esto la función muere y el cliente ve 502. En Pro, define SHOPIFY_SYNC_OVERALL_MAX_MS en el proyecto. */
+  if (process.env.VERCEL) {
+    return 9_000;
+  }
+  return DEFAULT_OVERALL_SYNC_MAX_MS;
 }
 
 function getSliceBudgetMs(override?: number): number {

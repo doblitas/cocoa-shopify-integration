@@ -8,11 +8,54 @@ import { listSyncedProductLinks } from "@/lib/productLinks/store";
 import { getTenantByShopDomain, getTenantByTenantId } from "@/lib/tenants";
 
 export const runtime = "nodejs";
+export const maxDuration = 60;
 
 function getBearerToken(request: Request): string | null {
   const auth = request.headers.get("authorization") ?? "";
   const m = auth.match(/^Bearer\s+(.+)$/i);
   return m?.[1]?.trim() ?? null;
+}
+
+/**
+ * HTTP 200 + { ok: false } en fallos recuperables para que el dashboard no reciba 502 opacos de Vercel.
+ */
+async function buildCoverageResponse(
+  tenantId: string,
+  shopDomain: string,
+  accessToken: string,
+  apiVersion: string,
+): Promise<NextResponse> {
+  try {
+    const { totalKeys: linkedCount } = await listSyncedProductLinks(tenantId);
+    let shopifyProductCount = 0;
+    try {
+      shopifyProductCount = await fetchShopifyProductCount({
+        shopDomain,
+        accessToken,
+        apiVersion,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Shopify count failed";
+      return NextResponse.json({ ok: false, error: msg }, { status: 200 });
+    }
+
+    const notLinkedCount = Math.max(0, shopifyProductCount - linkedCount);
+    const moreLinksThanProducts = linkedCount > shopifyProductCount;
+
+    return NextResponse.json({
+      ok: true,
+      tenantId,
+      shopDomain,
+      shopifyProductCount,
+      linkedCount,
+      notLinkedCount,
+      moreLinksThanProducts,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Coverage failed";
+    console.error("sync-coverage buildCoverageResponse", { tenantId, msg });
+    return NextResponse.json({ ok: false, error: msg }, { status: 200 });
+  }
 }
 
 export async function GET(request: Request) {
@@ -26,39 +69,6 @@ export async function GET(request: Request) {
   const tenantIdParam = url.searchParams.get("tenantId")?.trim() ?? "";
 
   const apiVersion = process.env.SHOPIFY_ADMIN_API_VERSION ?? "2024-10";
-
-  const buildResponse = (
-    tenantId: string,
-    shopDomain: string,
-    accessToken: string,
-  ) =>
-    (async () => {
-      const { totalKeys: linkedCount } = await listSyncedProductLinks(tenantId);
-      let shopifyProductCount = 0;
-      try {
-        shopifyProductCount = await fetchShopifyProductCount({
-          shopDomain,
-          accessToken,
-          apiVersion,
-        });
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : "Shopify count failed";
-        return NextResponse.json({ ok: false, error: msg }, { status: 502 });
-      }
-
-      const notLinkedCount = Math.max(0, shopifyProductCount - linkedCount);
-      const moreLinksThanProducts = linkedCount > shopifyProductCount;
-
-      return NextResponse.json({
-        ok: true,
-        tenantId,
-        shopDomain,
-        shopifyProductCount,
-        linkedCount,
-        notLinkedCount,
-        moreLinksThanProducts,
-      });
-    })();
 
   if (syncSecret && token === syncSecret) {
     if (!tenantIdParam) {
@@ -82,7 +92,7 @@ export async function GET(request: Request) {
         { status: 400 },
       );
     }
-    return buildResponse(tenant.tenantId, tenant.shopDomain, access);
+    return buildCoverageResponse(tenant.tenantId, tenant.shopDomain, access, apiVersion);
   }
 
   let shopify;
@@ -126,14 +136,17 @@ export async function GET(request: Request) {
     if (!session.accessToken) {
       return NextResponse.json(
         { ok: false, error: "Token exchange returned no access token" },
-        { status: 502 },
+        { status: 503 },
       );
     }
     accessToken = session.accessToken;
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Token exchange failed";
-    return NextResponse.json({ ok: false, error: `Session token exchange failed: ${msg}` }, { status: 502 });
+    return NextResponse.json(
+      { ok: false, error: `Session token exchange failed: ${msg}` },
+      { status: 503 },
+    );
   }
 
-  return buildResponse(tenant.tenantId, tenant.shopDomain, accessToken);
+  return buildCoverageResponse(tenant.tenantId, tenant.shopDomain, accessToken, apiVersion);
 }
