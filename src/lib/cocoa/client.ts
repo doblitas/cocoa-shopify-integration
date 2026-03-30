@@ -63,7 +63,7 @@ async function getAuthToken(credentials: CocoaCredentials, tenantId: string): Pr
 
   const response = await fetch(buildUrl(credentials.baseUrl, "/autenticacion/api/login"), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
       usuario: credentials.user,
       password: credentials.password,
@@ -71,7 +71,11 @@ async function getAuthToken(credentials: CocoaCredentials, tenantId: string): Pr
   });
 
   if (!response.ok) {
-    throw new Error(`Cocoa login failed with status ${response.status}`);
+    const text = await response.text();
+    const hint = text.trim() ? `: ${text.slice(0, 800)}` : "";
+    throw new Error(
+      `Cocoa login failed ${response.status} (POST .../autenticacion/api/login)${hint}. Comprueba cocoa.baseUrl (test vs prod), usuario/contraseña en SHOPIFY_TENANTS_JSON y logs del servicio Cocoa en Cloud Run.`,
+    );
   }
 
   const payload = (await response.json()) as CocoaAuthResponse;

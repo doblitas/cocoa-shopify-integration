@@ -10,8 +10,84 @@ const redis =
 
 const memoryStore = new Map<string, string>();
 
+/** Máximo de filas devueltas al dashboard (evita respuestas enormes). */
+export const MAX_SYNCED_PRODUCTS_LIST = 5000;
+
+export type SyncedProductLink = {
+  shopifyProductId: number;
+  cocoaKey: string;
+};
+
+export type ListSyncedProductLinksResult = {
+  items: SyncedProductLink[];
+  truncated: boolean;
+  totalKeys: number;
+};
+
 function buildKey(tenantId: string, shopifyProductId: number): string {
   return `tenant:${tenantId}:shopify-product:${shopifyProductId}:cocoa-key`;
+}
+
+function parseProductIdFromRedisKey(tenantId: string, key: string): number | null {
+  const escaped = tenantId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const re = new RegExp(`^tenant:${escaped}:shopify-product:(\\d+):cocoa-key$`);
+  const m = key.match(re);
+  if (!m) return null;
+  return Number(m[1]);
+}
+
+/**
+ * Lista vínculos Shopify product id → Cocoa key (SCAN en Redis / iteración en memoria).
+ */
+export async function listSyncedProductLinks(tenantId: string): Promise<ListSyncedProductLinksResult> {
+  const pattern = `tenant:${tenantId}:shopify-product:*:cocoa-key`;
+
+  if (redis) {
+    const keys: string[] = [];
+    let cursor = "0";
+    do {
+      const [nextCursor, found] = await redis.scan(cursor, { match: pattern, count: 200 });
+      cursor = nextCursor;
+      keys.push(...found);
+    } while (cursor !== "0");
+
+    keys.sort();
+    const totalKeys = keys.length;
+    const truncated = totalKeys > MAX_SYNCED_PRODUCTS_LIST;
+    const capped = keys.slice(0, MAX_SYNCED_PRODUCTS_LIST);
+    const items: SyncedProductLink[] = [];
+
+    for (let i = 0; i < capped.length; i += 100) {
+      const batch = capped.slice(i, i + 100);
+      const vals = await redis.mget<(string | null)[]>(...batch);
+      batch.forEach((key, idx) => {
+        const cocoaKey = vals[idx];
+        const shopifyProductId = parseProductIdFromRedisKey(tenantId, key);
+        if (shopifyProductId != null && cocoaKey) {
+          items.push({ shopifyProductId, cocoaKey });
+        }
+      });
+    }
+
+    items.sort((a, b) => a.shopifyProductId - b.shopifyProductId);
+    return { items, truncated, totalKeys };
+  }
+
+  const prefix = `tenant:${tenantId}:shopify-product:`;
+  const suffix = `:cocoa-key`;
+  const raw: SyncedProductLink[] = [];
+  for (const [key, cocoaKey] of memoryStore.entries()) {
+    if (!key.startsWith(prefix) || !key.endsWith(suffix)) continue;
+    const shopifyProductId = parseProductIdFromRedisKey(tenantId, key);
+    if (shopifyProductId != null) {
+      raw.push({ shopifyProductId, cocoaKey });
+    }
+  }
+  raw.sort((a, b) => a.shopifyProductId - b.shopifyProductId);
+  const totalKeys = raw.length;
+  const truncated = totalKeys > MAX_SYNCED_PRODUCTS_LIST;
+  const items = raw.slice(0, MAX_SYNCED_PRODUCTS_LIST);
+  return { items, truncated, totalKeys };
 }
 
 export async function getCocoaProductKey(
@@ -37,4 +113,3 @@ export async function saveCocoaProductKey(
   }
   memoryStore.set(key, cocoaProductKey);
 }
-

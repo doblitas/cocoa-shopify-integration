@@ -36,6 +36,13 @@ type ApiOk = {
 
 type ApiErr = { ok: false; error: string };
 
+type SyncedProductsOk = {
+  ok: true;
+  items: { shopifyProductId: number; cocoaKey: string }[];
+  truncated?: boolean;
+  totalKeys?: number;
+};
+
 type SyncOk = {
   ok: true;
   tenantId: string;
@@ -73,6 +80,9 @@ export function DashboardBridge() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [syncedRows, setSyncedRows] = useState<{ shopifyProductId: number; cocoaKey: string }[]>([]);
+  const [syncedMeta, setSyncedMeta] = useState<{ truncated: boolean; totalKeys: number } | null>(null);
+  const [syncedError, setSyncedError] = useState<string | null>(null);
 
   const load = useCallback(
     async (mode: "initial" | "refresh") => {
@@ -82,21 +92,45 @@ export function DashboardBridge() {
         setRefreshing(true);
       }
       setError(null);
+      setSyncedError(null);
       try {
         const token = await shopify.idToken();
-        const res = await fetch("/api/dashboard/sync-status", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const json = (await res.json()) as ApiOk | ApiErr;
-        if (!res.ok || !json.ok) {
+        const headers = { Authorization: `Bearer ${token}` };
+        const [resStatus, resSynced] = await Promise.all([
+          fetch("/api/dashboard/sync-status", { headers }),
+          fetch("/api/dashboard/synced-products", { headers }),
+        ]);
+        const json = (await resStatus.json()) as ApiOk | ApiErr;
+        if (!resStatus.ok || !json.ok) {
           setError("error" in json ? json.error : "Error al cargar el estado");
           setData(null);
+          setSyncedRows([]);
+          setSyncedMeta(null);
           return;
         }
         setData(json);
+
+        const syncedParsed = (await resSynced.json()) as SyncedProductsOk | ApiErr;
+        if (resSynced.ok && "ok" in syncedParsed && syncedParsed.ok && Array.isArray(syncedParsed.items)) {
+          setSyncedRows(syncedParsed.items);
+          setSyncedMeta({
+            truncated: Boolean(syncedParsed.truncated),
+            totalKeys: typeof syncedParsed.totalKeys === "number" ? syncedParsed.totalKeys : syncedParsed.items.length,
+          });
+        } else {
+          setSyncedRows([]);
+          setSyncedMeta(null);
+          setSyncedError(
+            "error" in syncedParsed && typeof syncedParsed.error === "string"
+              ? syncedParsed.error
+              : "No se pudo cargar el listado de productos enlazados",
+          );
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Error desconocido");
         setData(null);
+        setSyncedRows([]);
+        setSyncedMeta(null);
       } finally {
         if (mode === "initial") {
           setLoading(false);
@@ -290,6 +324,71 @@ export function DashboardBridge() {
                     ) : null}
                   </BlockStack>
                 )}
+              </BlockStack>
+            </Card>
+          ) : null}
+
+          {!loading && !error && data ? (
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Productos enlazados con Cocoa
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Productos de Shopify que ya tienen clave en Cocoa (tras crear o actualizar correctamente en
+                  sync o webhook). No incluye productos que aún no se han sincronizado.
+                </Text>
+                {syncedError ? (
+                  <Text as="p" tone="critical">
+                    {syncedError}
+                  </Text>
+                ) : null}
+                {!syncedError && syncedMeta && syncedMeta.totalKeys === 0 ? (
+                  <Text as="p" tone="subdued">
+                    Aún no hay productos enlazados. Ejecuta &quot;Sincronizar todo&quot; o espera webhooks.
+                  </Text>
+                ) : null}
+                {!syncedError && syncedRows.length > 0 ? (
+                  <BlockStack gap="200">
+                    <Text as="p" variant="bodySm">
+                      Total: <strong>{syncedMeta?.totalKeys ?? syncedRows.length}</strong>
+                      {syncedMeta?.truncated ? (
+                        <span>
+                          {" "}
+                          (mostrando los primeros {syncedRows.length}; hay más en el servidor — sube el límite en
+                          código o contacta soporte si necesitas export completo)
+                        </span>
+                      ) : null}
+                    </Text>
+                    <div style={{ maxHeight: 360, overflowY: "auto" }}>
+                      <BlockStack gap="150">
+                        {syncedRows.map((row) => (
+                          <InlineStack key={row.shopifyProductId} gap="300" blockAlign="center" wrap={false}>
+                            <Text as="span" variant="bodySm">
+                              Shopify{" "}
+                              <strong>#{row.shopifyProductId}</strong>
+                              {data.shopDomain ? (
+                                <>
+                                  {" "}
+                                  <a
+                                    href={`https://${data.shopDomain}/admin/products/${row.shopifyProductId}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    Abrir
+                                  </a>
+                                </>
+                              ) : null}
+                            </Text>
+                            <Text as="span" variant="bodySm" tone="subdued">
+                              Cocoa: <code>{row.cocoaKey}</code>
+                            </Text>
+                          </InlineStack>
+                        ))}
+                      </BlockStack>
+                    </div>
+                  </BlockStack>
+                ) : null}
               </BlockStack>
             </Card>
           ) : null}

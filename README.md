@@ -121,6 +121,8 @@ Optional:
 
 - **502 Bad Gateway:** Lo emite Vercel o el runtime, no es el mismo problema que el mensaje de `postMessage`. En el proyecto en Vercel: **Logs** (o **Runtime Logs**), filtra por código **502** y por ruta (`/dashboard`, `/api/sync/products`, etc.) y revisa el mensaje de error de esa petición y el deployment activo. Comprueba también que el último deploy terminó bien y que no hay variables de entorno faltantes en producción.
 
+- **500 en `POST …/autenticacion/api/login` (Cocoa):** Ese endpoint lo sirve **tu backend Cocoa** (p. ej. Cloud Run `app-…run.app`), no Shopify. La integración ya envía el body como en la doc (`usuario`, `password`, JSON). Si Vercel “External APIs” muestra **500** en login, revisa **logs de Cloud Run**, credenciales en `SHOPIFY_TENANTS_JSON` (`cocoa.user` / `cocoa.password`), y que `cocoa.baseUrl` sea el ambiente correcto (test `app-z3gjk55rwa-uc.a.run.app` vs prod en `docs/Webservice - Api producto Cocoa..md`). El mensaje de error del sync puede incluir ahora el cuerpo de respuesta de Cocoa para ayudar a diagnosticar.
+
 ## Shopify configuration checklist (per store)
 
 1. In Shopify Admin, create/install a **Custom App** for that store.

@@ -49,9 +49,9 @@ function assertTenant(raw: RawTenantConfig, index: number): TenantConfig {
     webhookSecret: raw.webhookSecret,
     adminAccessToken: raw.adminAccessToken,
     cocoa: {
-      baseUrl: raw.cocoa.baseUrl,
-      user: raw.cocoa.user,
-      password: raw.cocoa.password,
+      baseUrl: String(raw.cocoa.baseUrl).trim(),
+      user: String(raw.cocoa.user).trim(),
+      password: String(raw.cocoa.password),
     },
     categoryMap: raw.categoryMap,
     defaultCategoryKey: raw.defaultCategoryKey,
