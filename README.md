@@ -106,10 +106,13 @@ Example:
       "unico en tu tienda": "pEfPrAFQ4O569IEOjCsd",
       "otros": "rpRif5eUwaxCr1AT6aD6",
       "lo nuevo": "rxC6t41HWRt8ddM1Hjzk"
-    }
+    },
+    "shopifyPriceToCocoaMultiplier": 6.96
   }
 ]
 ```
+
+**Moneda Shopify vs bolivianos en Cocoa:** En **Ajustes → Detalles de la tienda** de Shopify revisa la **moneda de la tienda**: el `variant.price` de la API usa esa moneda. La integración envía a Cocoa un **número** en `precio`; la UI de Cocoa puede mostrar el sufijo «bs» aunque el valor sea otro. Si la tienda cotiza en **USD** y quieres que en Cocoa queden **bolivianos**, define opcionalmente `shopifyPriceToCocoaMultiplier` en el tenant (por ejemplo el tipo de cambio USD→BOB). Se aplica a **webhooks** y **sync masivo**; el resultado se redondea a **2 decimales**. Omite el campo o usa `1` para no convertir.
 
 Optional Redis variables for durable mappings:
 
@@ -148,6 +151,7 @@ Optional:
 4. Copy webhook secret and set it in that tenant object.
 5. Ensure products include data needed by Cocoa mapping:
    - title, description, sku, price, inventory, image, product type/tags.
+6. If Shopify store currency is USD but Cocoa should show amounts in BOB, set `shopifyPriceToCocoaMultiplier` in that tenant (see example JSON above).
 
 ## Run locally
 

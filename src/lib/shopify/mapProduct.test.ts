@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { mapShopifyProductToCocoaDraft } from "@/lib/shopify/mapProduct";
+import { applyShopifyPriceToCocoa, mapShopifyProductToCocoaDraft } from "@/lib/shopify/mapProduct";
 import type { TenantConfig } from "@/lib/tenants";
 import type { ShopifyProductWebhookPayload } from "@/lib/shopify/types";
 
@@ -50,5 +50,28 @@ describe("mapShopifyProductToCocoaDraft", () => {
     };
     const draft = mapShopifyProductToCocoaDraft(payload, tenant);
     expect(draft.key_categoria).toBe("cat-vend");
+  });
+
+  it("applies shopifyPriceToCocoaMultiplier to precio when set", () => {
+    const tenant: TenantConfig = {
+      ...baseTenant,
+      shopifyPriceToCocoaMultiplier: 6.96,
+    };
+    const payload: ShopifyProductWebhookPayload = {
+      id: 1,
+      title: "USD item",
+      body_html: "",
+      variants: [{ id: 1, sku: "X", price: "100", inventory_quantity: 1 }],
+    };
+    const draft = mapShopifyProductToCocoaDraft(payload, tenant);
+    expect(draft.precio).toBe(696);
+  });
+
+  it("rounds converted precio to two decimals", () => {
+    const tenant: TenantConfig = {
+      ...baseTenant,
+      shopifyPriceToCocoaMultiplier: 6.966666,
+    };
+    expect(applyShopifyPriceToCocoa(10, tenant)).toBe(69.67);
   });
 });

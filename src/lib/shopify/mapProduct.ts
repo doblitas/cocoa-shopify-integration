@@ -16,6 +16,24 @@ function stripHtml(input: string): string {
   return input.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Redondeo a 2 decimales para precios enviados a Cocoa. */
+function roundPriceForCocoa(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+/**
+ * Aplica `tenant.shopifyPriceToCocoaMultiplier` al precio del variant de Shopify (p. ej. USD → BOB).
+ * Sin multiplicador o multiplicador 1: mismo número que Shopify (redondeado a 2 decimales).
+ */
+export function applyShopifyPriceToCocoa(shopifyPrice: number, tenant: TenantConfig): number {
+  const raw = Number.isFinite(shopifyPrice) ? shopifyPrice : 0;
+  const mult = tenant.shopifyPriceToCocoaMultiplier;
+  if (mult == null || mult === 1) {
+    return roundPriceForCocoa(raw);
+  }
+  return roundPriceForCocoa(raw * mult);
+}
+
 function normalizeCategoryKey(value: string): string {
   return value.trim().toLowerCase();
 }
@@ -89,7 +107,7 @@ export function mapShopifyProductToCocoaDraft(
     nombre: payload.title,
     sku: firstVariant.sku || String(payload.id),
     descripcion: stripHtml(payload.body_html ?? ""),
-    precio: Number.isFinite(parsedPrice) ? parsedPrice : 0,
+    precio: applyShopifyPriceToCocoa(parsedPrice, tenant),
     have_stock: stock > 0,
     stock: Number.isFinite(stock) ? stock : 0,
     key_categoria: getCategoryKey(payload, tenant),

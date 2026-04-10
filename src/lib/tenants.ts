@@ -12,6 +12,12 @@ export type TenantConfig = {
   cocoa: CocoaCredentials;
   categoryMap?: Record<string, string>;
   defaultCategoryKey?: string;
+  /**
+   * Opcional. Multiplica el `variant.price` de Shopify antes de enviarlo a Cocoa como `precio`
+   * (p. ej. conversión USD → BOB cuando la tienda cotiza en dólares y Cocoa muestra bolivianos).
+   * Omitir o `1` = sin conversión.
+   */
+  shopifyPriceToCocoaMultiplier?: number;
 };
 
 type RawTenantConfig = {
@@ -22,6 +28,7 @@ type RawTenantConfig = {
   cocoa?: Partial<CocoaCredentials>;
   categoryMap?: Record<string, string>;
   defaultCategoryKey?: string;
+  shopifyPriceToCocoaMultiplier?: unknown;
 };
 
 function normalizeShopDomain(value: string): string {
@@ -43,6 +50,17 @@ function assertTenant(raw: RawTenantConfig, index: number): TenantConfig {
     throw new Error(`${prefix}.cocoa.baseUrl, cocoa.user and cocoa.password are required`);
   }
 
+  let shopifyPriceToCocoaMultiplier: number | undefined;
+  if (raw.shopifyPriceToCocoaMultiplier != null) {
+    const n = Number(raw.shopifyPriceToCocoaMultiplier);
+    if (!Number.isFinite(n) || n <= 0) {
+      throw new Error(
+        `${prefix}.shopifyPriceToCocoaMultiplier must be a positive finite number when set`,
+      );
+    }
+    shopifyPriceToCocoaMultiplier = n;
+  }
+
   return {
     tenantId: raw.tenantId,
     shopDomain: normalizeShopDomain(raw.shopDomain),
@@ -55,6 +73,7 @@ function assertTenant(raw: RawTenantConfig, index: number): TenantConfig {
     },
     categoryMap: raw.categoryMap,
     defaultCategoryKey: raw.defaultCategoryKey,
+    shopifyPriceToCocoaMultiplier,
   };
 }
 
