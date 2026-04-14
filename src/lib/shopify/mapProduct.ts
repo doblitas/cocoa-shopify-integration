@@ -16,19 +16,40 @@ function stripHtml(input: string): string {
   return input.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
 }
 
+/** Tipo de cambio por defecto: precio Shopify en USD → bolivianos en Cocoa (1 USD = 6,96 BOB). */
+export const DEFAULT_USD_TO_BOB_MULTIPLIER = 6.96;
+
 /** Redondeo a 2 decimales para precios enviados a Cocoa. */
 function roundPriceForCocoa(value: number): number {
   return Math.round(value * 100) / 100;
 }
 
 /**
- * Aplica `tenant.shopifyPriceToCocoaMultiplier` al precio del variant de Shopify (p. ej. USD → BOB).
- * Sin multiplicador o multiplicador 1: mismo número que Shopify (redondeado a 2 decimales).
+ * Orden: 1) `tenant.shopifyPriceToCocoaMultiplier` si está definido (usar `1` para no convertir);
+ * 2) `SHOPIFY_DEFAULT_PRICE_TO_COCOA_MULTIPLIER` en entorno; 3) {@link DEFAULT_USD_TO_BOB_MULTIPLIER}.
+ */
+function resolvePriceMultiplier(tenant: TenantConfig): number {
+  if (tenant.shopifyPriceToCocoaMultiplier != null) {
+    return tenant.shopifyPriceToCocoaMultiplier;
+  }
+  const fromEnv = process.env.SHOPIFY_DEFAULT_PRICE_TO_COCOA_MULTIPLIER?.trim();
+  if (fromEnv) {
+    const n = Number(fromEnv);
+    if (Number.isFinite(n) && n > 0) {
+      return n;
+    }
+  }
+  return DEFAULT_USD_TO_BOB_MULTIPLIER;
+}
+
+/**
+ * Convierte el `variant.price` de Shopify al `precio` enviado a Cocoa en bolivianos (por defecto × 6,96).
+ * Con multiplicador explícito `1` en el tenant, se envía el mismo número que Shopify (p. ej. tienda ya en BOB).
  */
 export function applyShopifyPriceToCocoa(shopifyPrice: number, tenant: TenantConfig): number {
   const raw = Number.isFinite(shopifyPrice) ? shopifyPrice : 0;
-  const mult = tenant.shopifyPriceToCocoaMultiplier;
-  if (mult == null || mult === 1) {
+  const mult = resolvePriceMultiplier(tenant);
+  if (mult === 1) {
     return roundPriceForCocoa(raw);
   }
   return roundPriceForCocoa(raw * mult);

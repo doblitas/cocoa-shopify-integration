@@ -13,9 +13,8 @@ export type TenantConfig = {
   categoryMap?: Record<string, string>;
   defaultCategoryKey?: string;
   /**
-   * Opcional. Multiplica el `variant.price` de Shopify antes de enviarlo a Cocoa como `precio`
-   * (p. ej. conversión USD → BOB cuando la tienda cotiza en dólares y Cocoa muestra bolivianos).
-   * Omitir o `1` = sin conversión.
+   * Opcional. Si se define: multiplica el `variant.price` antes de Cocoa (`1` = sin conversión).
+   * Si se omite: se usa `SHOPIFY_DEFAULT_PRICE_TO_COCOA_MULTIPLIER` o **6,96** (USD → BOB).
    */
   shopifyPriceToCocoaMultiplier?: number;
 };

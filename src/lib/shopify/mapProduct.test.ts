@@ -13,7 +13,7 @@ const baseTenant: TenantConfig = {
 };
 
 describe("mapShopifyProductToCocoaDraft", () => {
-  it("maps title, price, sku and default category", () => {
+  it("maps title, price (USD×6.96→BOB por defecto), sku and default category", () => {
     const payload: ShopifyProductWebhookPayload = {
       id: 99,
       title: "Test product",
@@ -30,11 +30,24 @@ describe("mapShopifyProductToCocoaDraft", () => {
     const draft = mapShopifyProductToCocoaDraft(payload, baseTenant);
     expect(draft.nombre).toBe("Test product");
     expect(draft.sku).toBe("SKU-1");
-    expect(draft.precio).toBe(12.5);
+    expect(draft.precio).toBe(87);
     expect(draft.have_stock).toBe(true);
     expect(draft.stock).toBe(3);
     expect(draft.key_categoria).toBe("cat-default");
     expect(draft.descripcion).toBe("Hello");
+  });
+
+  it("uses shopifyPriceToCocoaMultiplier 1 to skip conversion when Shopify is already BOB", () => {
+    const tenant: TenantConfig = {
+      ...baseTenant,
+      shopifyPriceToCocoaMultiplier: 1,
+    };
+    const payload: ShopifyProductWebhookPayload = {
+      id: 1,
+      title: "P",
+      variants: [{ id: 1, sku: "S", price: "12.50", inventory_quantity: 1 }],
+    };
+    expect(mapShopifyProductToCocoaDraft(payload, tenant).precio).toBe(12.5);
   });
 
   it("uses categoryMap from product_type when present", () => {
